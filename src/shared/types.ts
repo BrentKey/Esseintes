@@ -29,6 +29,8 @@ export interface Store {
   lastError: string | null
   /** Department the last successful sync was scoped to. */
   scope: string | null
+  /** Catalogue address the last sync read (changes when a store's English version is used). */
+  source: string | null
   productCount: number
   createdAt: string
 }

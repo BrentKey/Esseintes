@@ -136,7 +136,7 @@ export function App() {
                 </div>
               ))}
               <footer className="footer muted small">
-                <em>Esseintes</em>, after J.-K. Huysmans’ <em>À rebours</em> (1884). Prices and stock are confirmed on each store’s own site.
+                Prices and stock are confirmed on each store’s own site.
               </footer>
             </main>
           </div>

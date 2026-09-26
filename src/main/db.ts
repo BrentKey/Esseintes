@@ -146,6 +146,11 @@ export function openDb(file: string) {
   ensureColumn('products', 'new_color_at', 'TEXT')
   ensureColumn('products', 'new_color_name', 'TEXT')
   ensureColumn('favorites', 'size', 'TEXT')
+  ensureColumn('stores', 'source', 'TEXT')
+  runOnce('clear-drops-from-catalogue-switch', () =>
+    // Markdowns flagged when stores first switched to their English/US catalogue weren't real.
+    db.exec('UPDATE products SET price_dropped_at = NULL, previous_price = NULL')
+  )
   db.exec('CREATE INDEX IF NOT EXISTS products_model ON products(model_key)')
   // Clear "just reduced" flags left by exchange-rate wobble before markdowns needed to be 5%+.
   db.prepare('UPDATE products SET price_dropped_at = NULL, previous_price = NULL WHERE previous_price IS NOT NULL AND price > previous_price * ?').run(1 - MARKDOWN)
@@ -157,6 +162,14 @@ export function openDb(file: string) {
   db.function('my_size', { deterministic: false }, (label: unknown) =>
     sizeMatches(String(label), cachedSettings().mySizes) ? 1 : 0
   )
+}
+
+/** Runs a one-off data fix the first time the app sees it. */
+function runOnce(name: string, fn: () => void) {
+  const key = `_migration:${name}`
+  if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)) return
+  fn()
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(key, JSON.stringify(now()))
 }
 
 function ensureColumn(table: string, column: string, definition: string) {
@@ -218,6 +231,7 @@ function rowToStore(r: any): Store {
     lastSyncedAt: r.last_synced_at,
     lastError: r.last_error,
     scope: r.scope ?? null,
+    source: r.source ?? null,
     productCount: r.product_count ?? 0,
     createdAt: r.created_at
   }
@@ -240,7 +254,7 @@ export function insertStore(url: string, name: string, gender: StoreGender): Sto
 export function updateStore(id: number, patch: Record<string, unknown>) {
   const cols: Record<string, string> = {
     name: 'name', gender: 'gender', enabled: 'enabled', platform: 'platform',
-    currency: 'currency', lastSyncedAt: 'last_synced_at', lastError: 'last_error', scope: 'scope'
+    currency: 'currency', lastSyncedAt: 'last_synced_at', lastError: 'last_error', scope: 'scope', source: 'source'
   }
   for (const [k, v] of Object.entries(patch)) {
     if (!cols[k] || v === undefined) continue
@@ -289,7 +303,7 @@ export function existingProducts(storeId: number) {
   return new Map(rows.map((r) => [r.id as string, r]))
 }
 
-export function upsertProduct(p: StoredProductInput, initial: boolean, existing: any | undefined) {
+export function upsertProduct(p: StoredProductInput, initial: boolean, existing: any | undefined, ignoreDrops = false) {
   const ts = now()
   const sizesJson = JSON.stringify(p.sizes)
   let priceDroppedAt: string | null = null
@@ -313,7 +327,7 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
     const priceChanged = changedMeaningfully(existing.price, p.price) || changedMeaningfully(existing.compare_at_price, p.compareAtPrice)
     if (priceChanged) {
       recordPrice(p.id, p.price, p.compareAtPrice, ts)
-      if (p.price <= existing.price * (1 - MARKDOWN)) {
+      if (!ignoreDrops && p.price <= existing.price * (1 - MARKDOWN)) {
         priceDroppedAt = ts
         previousPrice = existing.price
       }
@@ -772,7 +786,7 @@ export function getHome(previousVisit: string | null): HomeData {
   // Latest product per category supplies the tile image.
   const categories = (db
     .prepare(
-      `SELECT p.category AS name, COUNT(*) AS count,
+      `SELECT p.category AS name, COUNT(DISTINCT COALESCE(p.model_key, p.id)) AS count,
         (SELECT json_extract(p2.images, '$[0]') FROM products p2 JOIN stores s2 ON s2.id = p2.store_id
           WHERE p2.category = p.category AND p2.removed_at IS NULL AND p2.available = 1 AND s2.enabled = 1
           ORDER BY p2.first_seen_at DESC LIMIT 1) AS image

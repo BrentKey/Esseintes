@@ -29,6 +29,8 @@ export interface FetchResult {
   currency: string | null
   /** False when the catalogue may be incomplete; removals are skipped then. */
   complete: boolean
+  /** Where the catalogue was read from (e.g. a store's /en-us version). */
+  source?: string
 }
 
 export interface Adapter {

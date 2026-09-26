@@ -243,11 +243,14 @@ export const shopify: Adapter = {
     const cart = await tryFetchJson<{ currency?: string }>(`${root}/cart.js`)
     const currency = cart?.currency ?? null
     const { products, complete } = await fetchCollection(root, '', onProgress)
-    const { genders, kids } = await genderMembership(root)
+    // Collections are looked up on the main site: translated handles (e.g. Boglioli's
+    // "uomo" shown as "man" under /en-us) often return nothing in the English catalogue.
+    const { genders, kids } = await genderMembership(base)
     return {
       products: products.map((p) => toRaw(root, p, currency, genders.get(p.id) ?? null, kids.has(p.id))),
       currency,
-      complete
+      complete,
+      source: root
     }
   }
 }

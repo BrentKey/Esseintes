@@ -18,6 +18,9 @@ export async function fetchText(url: string, accept = 'text/html,*/*', retries =
   for (let attempt = 0; ; attempt++) {
     try {
       const res = await net.fetch(url, {
+        // No cookies: stores remember a visitor's language/country in one, which
+        // would silently change later answers (e.g. after reading a /en-us catalogue).
+        credentials: 'omit',
         headers: { ...HEADERS, Accept: accept },
         signal: AbortSignal.timeout(20_000)
       })

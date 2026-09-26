@@ -6,6 +6,7 @@ import type { Adapter, RawProduct } from './adapters/types'
 import { woocommerce } from './adapters/woocommerce'
 import { type NewAlert, wishlistAlerts } from './alerts'
 import { brandResolver } from './brands'
+import { departmentOf } from '@shared/categories'
 import { classifyCategory, classifyGender, isKids } from './classify'
 import * as db from './db'
 import { mapLimit } from './http'
@@ -76,6 +77,9 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
     const existing = db.existingProducts(store.id)
     const liveBefore = [...existing.values()].filter((r) => !r.removed_at).length
     const initial = existing.size === 0
+    // A different catalogue (e.g. switching to a store's English/US version) can
+    // carry different prices; that's not a markdown, so skip drop detection once.
+    const sourceChanged = !!fetched.source && store.source !== fetched.source
     const currency = fetched.currency ?? store.currency ?? 'USD'
     const settings = db.getSettings()
     const favorites = db.favoriteSizes()
@@ -95,6 +99,16 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
       const id = `${store.id}:${raw.externalId}`
       if (!byId.has(id)) byId.set(id, toStored(store, raw, id, currency, brandOf(raw.brand)))
     }
+    // A store whose men's section holds nearly everything (and has no women's
+    // section) is signalling that the clothing left outside it is womenswear.
+    const rawById = new Map(products.map((r) => [`${store.id}:${r.externalId}`, r]))
+    const raws = [...byId.keys()].map((id) => rawById.get(id)!)
+    const share = (g: string) => raws.filter((r) => r.collectionGender === g || r.collectionGender === 'unisex').length / Math.max(1, raws.length)
+    for (const [inside, outside] of [['men', 'women'], ['women', 'men']] as const) {
+      if (share(inside) < 0.85 || share(outside) > 0) continue
+      for (const [i, p] of [...byId.values()].entries())
+        if (p.gender === 'unknown' && !raws[i].collectionGender && ['Clothing', 'Shoes'].includes(departmentOf(p.category))) p.gender = outside
+    }
     const storeGender = inferStoreGender([...byId.values()].map((p) => p.gender))
     if (storeGender) for (const p of byId.values()) if (p.gender === 'unknown') p.gender = storeGender
     db.updateStore(store.id, { gender: storeGender ?? 'mixed' })
@@ -110,7 +124,7 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
         seen.add(id)
         const prev = existing.get(id)
         const next = { ...stored, position: seen.size }
-        const { priceDropped } = db.upsertProduct(next, initial, prev)
+        const { priceDropped } = db.upsertProduct(next, initial, prev, sourceChanged)
         // Restocks are judged against the size saved with the item, else the user's sizes.
         if (prev && favorites.has(id)) {
           const size = favorites.get(id)
@@ -140,7 +154,7 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
     } catch {
       /* homepage unreachable: keep previous promotions */
     }
-    db.updateStore(store.id, { lastSyncedAt: new Date().toISOString(), lastError: null, currency, scope: settings.gender })
+    db.updateStore(store.id, { lastSyncedAt: new Date().toISOString(), lastError: null, currency, scope: settings.gender, source: fetched.source ?? null })
   } catch (e) {
     result.error = e instanceof Error ? e.message : String(e)
     db.updateStore(store.id, { lastError: result.error })

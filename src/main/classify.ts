@@ -16,23 +16,23 @@ const CATEGORY_RULES: [string, RegExp][] = [
   ['Swimwear', /\b(swim|swimwear|swimsuits?|swim ?shorts|board ?shorts|trunks swim)\b/],
   ['Underwear & Socks', /\b(socks?|boxers?|briefs|underwear|trunks|undershirts?|vest top|leg ?warmers?)\b/],
   ['Loungewear', /\b(pyjamas?|pajamas?|loungewear|robes?|dressing gown|nightwear|sleepwear)\b/],
-  ['Shorts', /\b(shorts)\b/],
+  ['Shorts', /\b(shorts|bermudas?|half tights)\b/],
   ['Suits & Blazers', /\b(suits?|blazers?|sport ?coats?|tuxedos?|waistcoats?|tailoring|dinner jacket)\b/],
-  ['Coats & Jackets', /\b(coats?|jackets?|parkas?|anoraks?|gilets?|bombers?|overcoats?|trench|puffers?|windbreakers?|shackets?|chore|outerwear|blousons?|harrington|peacoat|raincoat|down vest|body ?warmer)\b/],
-  ['Sweats & Hoodies', /\b(hoodies?|hooded|sweatshirts?|sweats?|crewneck sweat|track ?tops?|zip[- ]?ups?|fleece)\b/],
+  ['Coats & Jackets', /\b(coats?|jackets?|parkas?|anoraks?|gilets?|bombers?|overcoats?|trench|puffers?|windbreakers?|shackets?|chore|outerwear|overjackets?|blousons?|harrington|peacoat|caban|raincoat|down vest|body ?warmer|sahariana|safari jacket|sahara)\b/],
+  ['Sweats & Hoodies', /\b(hoodies?|hooded|sweatshirts?|sweats?|crewneck sweat|track ?tops?|zip[- ]?ups?|(half|quarter)[- ]?zip|fleece|\w*fleece)\b/],
   ['Polos', /\b(polos?(?! ?necks?)|polo shirts?|rugby)\b/],
-  ['Knitwear', /\b(knit(?!(ted)? ties?\b)|knits|knitted(?! ties?\b)|knitwear|sweaters?|jumpers?|cardigans?|pullovers?|turtlenecks?|roll ?necks?|merino|cashmere crew|mock ?neck)\b/],
-  ['T-Shirts & Tops', /\b(t-?shirts?|tees?|tank|tanks|vests?|henleys?|long ?sleeves?|longsleeves?|tops?|camisoles?|bodysuits?)\b/],
+  ['Knitwear', /\b(knit(?!(ted)? ties?\b)|knits|knitted(?! ties?\b)|knitwear|sweaters?|jumpers?|cardigans?|pullovers?|turtlenecks?|roll ?necks?|merino|cashmere crew|mock ?neck|crew ?necks?|v-?necks?)\b/],
+  ['T-Shirts & Tops', /\b(t-?shirts?|tees?|tank|tanks|vests?|singlets?|base ?layers?|henleys?|long ?sleeves?|longsleeves?|tops?|camisoles?|bodysuits?|jerseys?(?! (trousers?|pants|shorts|joggers?|shirts?|polos?|dress)))\b/],
   ['Shirts', /\b(shirts?|overshirts?|oxford|button[- ]?down|flannel|shirting)\b/],
   ['Jeans', /\b(jeans?|denim trousers|selvedge)\b/],
-  ['Trousers', /\b(trousers?|pants|chinos?|joggers?|sweatpants|slacks|cargos?|fatigues?|bottoms)\b/],
+  ['Trousers', /\b(trousers?|pants|chinos?|joggers?|sweatpants|slacks|cargos?|fatigues?|bottoms|tights)\b/],
   ['Dresses & Skirts', /\b(dress|dresses|skirts?|blouses?|bras?|bikinis?|leggings|jumpsuits?|gowns?|tunics?|kaftans?)\b/],
   ['Hats & Caps', /\b(hats?|caps?|beanies?|beret|bucket hat|headwear|balaclavas?|fedora|flat cap|trapper|ear ?warmers?|earmuffs?)\b/],
   ['Belts', /\b(belts?|braces|suspenders)\b/],
   ['Wallets & Leather Goods', /\b(wallets?|card ?(holders?|cases?|wallets?)|billfolds?|coin (purse|pouch)|key ?(rings?|chains?|holders?|fobs?)|passport (holders?|covers?)|leather goods|small leather)\b/],
-  ['Scarves & Gloves', /\b(scarf|scarves|snoods?|gloves?|mittens?|foulards?|shawls?|bandanas?|neckerchiefs?)\b/],
+  ['Scarves & Gloves', /\b(scarf|scarves|snoods?|\w*gloves?|neck (warmers?|gaiters?|coolers?|clooers?)|mittens?|foulards?|shawls?|bandanas?|neckerchiefs?)\b/],
   ['Ties & Pocket Squares', /\b(ties?|bow ?ties?|neckties?|pocket squares?|cravats?)\b/],
-  ['Home & Lifestyle', /\b(mugs?|cups?|books?|magazines?|issue \d+|printed (matter|goods)|posters?|prints?|blankets?|throws?|towels?|cushions?|homewares?|trays?|bowls?|plates?|vases?|carafes?|bottle openers?|glassware|ceramics?|incense|souvenirs?|kitchen|wine|bikes?|bicycles?|bar tape|playing cards|games?|stationery|notebooks?|pens?|objects?|decor|lighters?|ashtrays?|matches|match ?box(es)?|flasks?|tumblers?|set of \d|speedcups?)\b/],
+  ['Home & Lifestyle', /\b(napkins?|table ?cloths?|tablelcoths?|table runners?|tea towels?|placemats?|coasters?|mugs?|cups?|books?|magazines?|issue \d+|printed (matter|goods)|posters?|prints?|blankets?|throws?|towels?|cushions?|homewares?|trays?|bowls?|plates?|vases?|carafes?|bottle openers?|glassware|ceramics?|incense|souvenirs?|kitchen|wine|bikes?|bicycles?|bar tape|playing cards|games?|stationery|notebooks?|pens?|objects?|decor|lighters?|ashtrays?|matches|match ?box(es)?|flasks?|tumblers?|set of \d|speedcups?)\b/],
   ['Other Accessories', /\b(umbrellas?|lanyards?|patches|pins?|badges?|cleaning cloth|cases?|phone|airpods|keyrings?|sachets?)\b/]
 ]
 
@@ -105,6 +105,8 @@ export function classifyGender(
   collectionHint: Gender | null
 ): Gender {
   if (WOMEN_ONLY_CATEGORIES.includes(category)) return 'women'
+  // Garments that are womenswear whatever section a store files them under.
+  if (/\b(palazzo|culottes?|blouses?|camisoles?|kaftans?)\b/.test(normalize(texts.title))) return 'women'
   const titleText = normalize(texts.title)
   // An explicit "Women's ..." in the title beats a store filing it under men.
   if (WOMEN.test(titleText) && !MEN.test(titleText)) return 'women'
