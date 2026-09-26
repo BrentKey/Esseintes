@@ -439,7 +439,8 @@ img {
 .hero-images img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  mix-blend-mode: multiply;
   transition: transform 0.6s ease;
 }
 .hero-images button:hover img {
@@ -509,7 +510,8 @@ img {
 .category-img img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  mix-blend-mode: multiply;
 }
 .category-name {
   font-size: 12px;
@@ -570,7 +572,10 @@ img {
 .card-media img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* Show the whole product (like a stockist would), letting white photo
+     backgrounds melt into the tile colour. */
+  object-fit: contain;
+  mix-blend-mode: multiply;
 }
 .card-noimg {
   height: 100%;
@@ -1284,4 +1289,38 @@ img {
 }
 .small-display {
   font-size: 28px;
+}
+.color-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.color {
+  border: 1px solid var(--rule);
+  background: var(--paper-2);
+  min-width: 56px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  overflow: hidden;
+}
+.color img {
+  width: 56px;
+  height: 64px;
+  object-fit: contain;
+  mix-blend-mode: multiply;
+}
+.color span {
+  font-size: 12px;
+  padding: 0 10px;
+}
+.color:hover {
+  border-color: var(--ink-3);
+}
+.color.on {
+  border: 2px solid var(--ink);
+}
+.color.out {
+  opacity: 0.4;
 }

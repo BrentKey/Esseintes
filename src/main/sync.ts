@@ -5,6 +5,7 @@ import { shopify } from './adapters/shopify'
 import type { Adapter, RawProduct } from './adapters/types'
 import { woocommerce } from './adapters/woocommerce'
 import { type NewAlert, wishlistAlerts } from './alerts'
+import { brandResolver } from './brands'
 import { classifyCategory, classifyGender } from './classify'
 import * as db from './db'
 import { mapLimit } from './http'
@@ -13,7 +14,9 @@ import { detectPromotions } from './promotions'
 
 const ADAPTERS: Adapter[] = [shopify, woocommerce, generic]
 const STORE_CONCURRENCY = 3
-const NOT_A_PRODUCT = /\b(gift ?cards?|e-?gift|gift ?vouchers?|gift ?certificates?|shipping protection|route package protection)\b/i
+// Listings that aren't things you'd buy on their own: gift cards, shipping
+// add-ons, and lens upgrades that eyewear stores list as separate products.
+const NOT_A_PRODUCT = /\b(gift ?cards?|e-?gift|gift ?vouchers?|gift ?certificates?|shipping protection|route package protection|prescription lens(es)?|custom lens(es)?|lens (upgrade|option)s?|blue light filter lens(es)?|rox_lens)\b/i
 
 let status: SyncStatus = { running: false, currentStore: null, completed: 0, total: 0, lastRunAt: null, results: [] }
 let listener: (s: SyncStatus) => void = () => {}
@@ -79,11 +82,12 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
     const storeAlerts: NewAlert[] = []
 
     // Classify everything first so the store's overall mix can inform unlabelled items.
+    const products = fetched.products.filter((raw) => !NOT_A_PRODUCT.test(`${raw.productType} ${raw.title}`))
+    const brandOf = brandResolver(store.name, products.map((p) => p.brand))
     const byId = new Map<string, Omit<db.StoredProductInput, 'position'>>()
-    for (const raw of fetched.products) {
-      if (NOT_A_PRODUCT.test(`${raw.productType} ${raw.title}`)) continue
+    for (const raw of products) {
       const id = `${store.id}:${raw.externalId}`
-      if (!byId.has(id)) byId.set(id, toStored(store, raw, id, currency))
+      if (!byId.has(id)) byId.set(id, toStored(store, raw, id, currency, brandOf(raw.brand)))
     }
     const storeGender = inferStoreGender([...byId.values()].map((p) => p.gender))
     if (storeGender) for (const p of byId.values()) if (p.gender === 'unknown') p.gender = storeGender
@@ -148,24 +152,14 @@ function inferStoreGender(genders: string[]): 'men' | 'women' | null {
   return null
 }
 
-// Vendor fields sometimes hold placeholders or social handles rather than a brand.
-function cleanBrand(brand: string, storeName: string): string {
-  const b = brand.trim()
-  if (!b || b.startsWith('@') || /^(not specified|default|vendor|unknown|n\/a|none|-)$/i.test(b)) return storeName
-  // "Drakes - UK/ROW", "Drakes - AW26" etc. are internal vendor splits of the house brand.
-  const key = (s: string) => s.toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '')
-  if (key(b).startsWith(key(storeName)) && key(storeName).length >= 3) return storeName
-  return b
-}
-
-function toStored(store: Store, raw: RawProduct, id: string, currency: string): Omit<db.StoredProductInput, 'position'> {
+function toStored(store: Store, raw: RawProduct, id: string, currency: string, brand: string): Omit<db.StoredProductInput, 'position'> {
   const category = classifyCategory(raw.productType, raw.title, raw.tags)
   return {
     id,
     storeId: store.id,
     externalId: raw.externalId,
     title: raw.title,
-    brand: cleanBrand(raw.brand, store.name),
+    brand,
     description: htmlToText(raw.descriptionHtml),
     url: raw.url,
     productType: raw.productType,
@@ -177,6 +171,7 @@ function toStored(store: Store, raw: RawProduct, id: string, currency: string): 
     compareAtPrice: raw.compareAtPrice,
     currency: raw.currency ?? currency,
     sizes: raw.sizes,
+    colors: raw.colors ?? [],
     available: raw.available
   }
 }

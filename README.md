@@ -2,25 +2,28 @@
 
 <img src="build/icon.png" width="128" align="right" alt="A gold-foil tortoise set with gems, on black leather">
 
-Named for Jean des Esseintes, the hero of J.-K. Huysmans' *À rebours* (1884): the most fastidious collector in literature, who had a live tortoise's shell gilded and set with jewels. The icon is his tortoise.
-
 A desktop stockist for the online stores you actually shop. Add any store's web address and Esseintes pulls in everything it sells (photos, descriptions, sizes, prices) into one place with a clean, editorial storefront. It refreshes every time you open it, so you see new arrivals, price drops, sold-out sizes and store-wide sales without visiting each site.
 
 Nothing is hard-coded: stores, department (menswear / womenswear / both), currency and sizes are all yours to choose.
+
+![The Clothing page: filters by category, store and designer beside a grid of products, with sale prices](docs/screenshot-shop.jpg)
 
 ## Features
 
 - **One catalogue for all your stores.** Browse by department and category (shirts, knitwear, coats, shoes, sunglasses, hats…), store, designer, size and price, or search across everything.
 - **Only your department.** Pick menswear, womenswear or both once. Esseintes uses each store's own men's and women's collections to decide what to collect, and ignores the rest.
 - **One currency.** Prices are converted to your currency (USD by default) at daily rates, with the store's own price shown alongside.
+- **Every colourway.** Frame, lens and fabric options are pulled in with their own photos, so you can flip between them on the product page.
 - **Always current.** Every launch (and optionally every few hours while open) re-reads each store: new items are added, sold-out items disappear, prices and sizes update, and items a store removes are retired.
-- **New in and just reduced.** The home page leads with arrivals since your last visit and recent price drops. Every product keeps a price history.
+- **New in and just reduced.** The home page leads with arrivals since your last visit and recent markdowns (5% or more, so a store's automatic currency rounding doesn't count). Every product keeps a price history.
 - **Store-wide sales.** Announcement banners on each store's homepage are scanned for offers like "Extra 20% off everything with code FALL20". Sitewide offers are shown on every product from that store, with an estimated final price. You can also add or dismiss sales by hand.
 - **Your sizes.** Save the sizes you wear; they're highlighted on product pages, and you can hide anything that isn't in stock in your size.
 - **Wishlist alerts.** A desktop notification when something you've saved drops in price or comes back in stock in your size; recent alerts also appear on the home page.
 - **Hide what you don't want.** Hide a designer or a whole category from any product page, and manage the lists in Settings.
 - **Bring your list.** Paste several store addresses at once, or import a `.txt`/`.csv`/`.json` list. Export your stores to JSON to back them up or share them.
 - **Wishlist**, infinite scroll, and links straight to the product on the store's own site.
+
+![A product page: gallery, colourway picker, sizes and a link through to the store](docs/screenshot-product.jpg)
 
 ## How stores are read
 

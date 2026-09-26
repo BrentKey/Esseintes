@@ -7,6 +7,7 @@ import type { ImportResult, ProductQuery, Settings } from '@shared/types'
 import type { NewAlert } from './alerts'
 import * as db from './db'
 import { baseUrl, fetchText } from './http'
+import { cleanStoreName } from './brands'
 import { refreshRates } from './currency'
 import { parseStoreList } from './storelist'
 import * as sync from './sync'
@@ -52,8 +53,8 @@ async function guessStoreName(base: string): Promise<string> {
   const host = new URL(base).hostname.replace(/^www\./, '')
   try {
     const $ = load(await fetchText(base))
-    const name = $('meta[property="og:site_name"]').attr('content') || $('title').first().text().split(/[|–—-]/)[0]
-    if (name?.trim() && name.trim().length <= 40) return name.trim()
+    const name = cleanStoreName($('meta[property="og:site_name"]').attr('content') || $('title').first().text().split(/[|–—]/)[0])
+    if (name && name.length <= 40) return name
   } catch {
     /* fall back to domain */
   }
@@ -243,6 +244,8 @@ app.whenReady().then(async () => {
   const dbFile = join(app.getPath('userData'), 'esseintes.db')
   migrateFromStockroom(dbFile)
   db.openDb(dbFile)
+  // Tidy names saved before "Official Store"-style suffixes were stripped.
+  for (const s of db.listStores()) if (cleanStoreName(s.name) !== s.name) db.updateStore(s.id, { name: cleanStoreName(s.name) })
   // Remember the previous session so the home page can show what's new since then.
   previousVisit = db.getSettings().lastVisitAt
   db.saveSettings({ lastVisitAt: new Date().toISOString() })

@@ -13,9 +13,14 @@ export function Product({ id }: { id: string }) {
   const [p, setP] = useState<ProductDetail | null>(null)
   const [more, setMore] = useState<P[]>([])
   const [img, setImg] = useState(0)
+  const [color, setColor] = useState<string | null>(null)
+  // A colourway's photo may not be in the main gallery, so it can override it.
+  const [colorImage, setColorImage] = useState<string | null>(null)
 
   useEffect(() => {
     setImg(0)
+    setColor(null)
+    setColorImage(null)
     api.getProduct(id).then((d) => {
       setP(d)
       if (d)
@@ -34,12 +39,21 @@ export function Product({ id }: { id: string }) {
         <div className="gallery">
           <div className="thumbs">
             {p.images.slice(0, 10).map((src, i) => (
-              <button key={src} className={i === img ? 'on' : ''} onClick={() => setImg(i)}>
+              <button
+                key={src}
+                className={i === img && !colorImage ? 'on' : ''}
+                onClick={() => {
+                  setImg(i)
+                  setColorImage(null)
+                }}
+              >
                 <img src={sized(src, 160)} alt="" />
               </button>
             ))}
           </div>
-          <div className="gallery-main">{p.images[img] && <img src={sized(p.images[img], 1400)} alt={p.title} />}</div>
+          <div className="gallery-main">
+            {(colorImage ?? p.images[img]) && <img src={sized(colorImage ?? p.images[img], 1400)} alt={p.title} />}
+          </div>
         </div>
 
         <div className="product-info">
@@ -64,6 +78,35 @@ export function Product({ id }: { id: string }) {
                   Estimated {money(p.price * (1 - promo.percent! / 100), p.currency)} after {promo.percent}% off. Check exclusions at checkout.
                 </div>
               )}
+            </div>
+          )}
+
+          {p.colors.length > 1 && (
+            <div className="sizes">
+              <div className="sizes-head">
+                {p.colors.length} colours{color ? `: ${color}` : ''}
+              </div>
+              <div className="color-grid">
+                {p.colors.map((c) => (
+                  <button
+                    key={c.name}
+                    className={`color ${c.available ? '' : 'out'} ${color === c.name ? 'on' : ''}`}
+                    title={`${c.name}${c.available ? '' : ' (sold out)'}`}
+                    onClick={() => {
+                      setColor(c.name)
+                      if (!c.image) return
+                      const same = (a: string) => a.split('?')[0] === c.image!.split('?')[0]
+                      const i = p.images.findIndex(same)
+                      if (i >= 0) {
+                        setImg(i)
+                        setColorImage(null)
+                      } else setColorImage(c.image)
+                    }}
+                  >
+                    {c.image ? <img src={sized(c.image, 160)} alt="" /> : <span>{c.name}</span>}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 

@@ -1,4 +1,4 @@
-import type { Gender, Size } from '@shared/types'
+import type { Colorway, Gender, Size } from '@shared/types'
 import { collectionGender, isSizeOption } from '../classify'
 import { fetchJson, HttpError, sleep, tryFetchJson } from '../http'
 import type { Adapter, FetchResult, RawProduct } from './types'
@@ -12,6 +12,7 @@ interface ShopifyVariant {
   price: string
   compare_at_price: string | null
   available?: boolean
+  featured_image?: { src: string } | null
 }
 
 interface ShopifyProduct {
@@ -24,7 +25,7 @@ interface ShopifyProduct {
   tags: string[] | string
   variants: ShopifyVariant[]
   options: { name: string; position: number; values: string[] }[]
-  images: { src: string }[]
+  images: { src: string; variant_ids?: number[] }[]
 }
 
 const PAGE_SIZE = 250
@@ -104,6 +105,28 @@ function toRaw(base: string, p: ShopifyProduct, currency: string | null, gender:
   const onlyOption = p.options?.length === 1 && p.options[0].name !== 'Title' ? 0 : -1
   const idx = sizeOptIndex >= 0 ? sizeOptIndex : onlyOption
 
+  // Every other real option (Color, Lens, Frame, Finish…) describes the colourway.
+  const colorIdx = (p.options ?? [])
+    .map((o, i) => (i !== idx && o.name !== 'Title' && !isSizeOption(o.name) ? i : -1))
+    .filter((i) => i >= 0)
+  const colors: Colorway[] = []
+  if (colorIdx.length) {
+    const byName = new Map<string, Colorway>()
+    for (const v of variants) {
+      const name = colorIdx
+        .map((i) => v[`option${i + 1}` as 'option1' | 'option2' | 'option3'])
+        .filter((x): x is string => !!x && x !== 'Default Title')
+        .join(' / ')
+      if (!name) continue
+      const image = v.featured_image?.src ?? p.images?.find((im) => im.variant_ids?.includes(v.id))?.src ?? null
+      const c = byName.get(name) ?? { name, available: false, image }
+      c.available ||= v.available !== false
+      c.image ??= image
+      byName.set(name, c)
+    }
+    colors.push(...byName.values())
+  }
+
   let sizes: Size[] = []
   if (idx >= 0) {
     const key = `option${idx + 1}` as 'option1' | 'option2' | 'option3'
@@ -139,6 +162,7 @@ function toRaw(base: string, p: ShopifyProduct, currency: string | null, gender:
     compareAtPrice: compare && compare > price ? compare : null,
     currency,
     sizes,
+    colors: colors.length > 1 ? colors : [],
     available: inStock.length > 0,
     collectionGender: gender
   }

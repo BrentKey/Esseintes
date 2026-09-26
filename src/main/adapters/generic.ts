@@ -120,6 +120,15 @@ export function parseProduct(url: string, html: string): RawProduct | null {
   }
   for (const [label, available] of bySize) sizes.push({ label, available })
 
+  const byColor = new Map<string, { name: string; available: boolean; image: string | null }>()
+  for (const v of variants) {
+    const name = typeof v.color === 'string' ? v.color : null
+    if (!name) continue
+    const c = byColor.get(name) ?? { name, available: false, image: imageUrls(v.image)[0] ?? null }
+    c.available ||= asArray(v.offers).some((o: Json) => inStock(o.availability))
+    byColor.set(name, c)
+  }
+
   const brand = typeof p.brand === 'string' ? p.brand : (p.brand?.name ?? '')
   const images = imageUrls(p.image).concat(variants.flatMap((v) => imageUrls(v.image)))
   const category = [p.category, $('meta[property="product:category"]').attr('content')].filter(Boolean).join(' ')
@@ -138,6 +147,7 @@ export function parseProduct(url: string, html: string): RawProduct | null {
     compareAtPrice: !isNaN(strike) && strike > best.price ? strike : null,
     currency: best.currency ?? null,
     sizes,
+    colors: byColor.size > 1 ? [...byColor.values()] : [],
     available: prices.some((o) => o.available),
     collectionGender: null
   }

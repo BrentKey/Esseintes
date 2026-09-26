@@ -14,7 +14,7 @@ export function ProductCard({ product, onFavorite, note }: { product: Product; o
   const pct = discountPercent(product)
   const promo = bestSitewidePromo(promotions, product.storeId)
   const reduced = isRecent(product.priceDroppedAt, 14)
-  const isNew = isRecent(product.firstSeenAt, 7)
+  const isNew = product.isNew
   const img = hover && product.images[1] ? product.images[1] : product.images[0]
 
   async function toggle(e: React.MouseEvent) {
@@ -48,7 +48,13 @@ export function ProductCard({ product, onFavorite, note }: { product: Product; o
         <div className="card-brand">{product.brand}</div>
         <div className="card-title">{product.title}</div>
         <Price product={product} promo={promo} compact />
-        {product.storeName !== product.brand && <div className="card-store">{product.storeName}</div>}
+        {(product.storeName !== product.brand || product.colors.length > 1) && (
+          <div className="card-store">
+            {[product.storeName !== product.brand && product.storeName, product.colors.length > 1 && `${product.colors.length} colours`]
+              .filter(Boolean)
+              .join(' · ')}
+          </div>
+        )}
       </div>
     </article>
   )

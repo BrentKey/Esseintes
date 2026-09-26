@@ -8,6 +8,13 @@ export interface Size {
   available: boolean
 }
 
+/** One colour option of a product, e.g. a frame/lens combination. */
+export interface Colorway {
+  name: string
+  available: boolean
+  image: string | null
+}
+
 export interface Store {
   id: number
   name: string
@@ -42,8 +49,11 @@ export interface Product {
   originalPrice: number | null
   originalCurrency: string | null
   sizes: Size[]
+  colors: Colorway[]
   available: boolean
   firstSeenAt: string
+  /** Arrived since the store was added (and within the last week). */
+  isNew: boolean
   priceDroppedAt: string | null
   previousPrice: number | null
   favorite: boolean

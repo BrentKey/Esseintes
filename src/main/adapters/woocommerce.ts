@@ -56,6 +56,9 @@ function toRaw(p: WooProduct): RawProduct {
     currency: p.prices?.currency_code ?? null,
     // The list endpoint doesn't expose per-variation stock, so sizes share the product's.
     sizes: (sizeAttr?.terms ?? []).map((t) => ({ label: decode(t.name), available: p.is_in_stock })),
+    colors: ((p.attributes ?? []).find((a) => a !== sizeAttr && /colou?r|frame|lens|finish/i.test(a.name))?.terms ?? [])
+      .map((t) => ({ name: decode(t.name), available: p.is_in_stock, image: null }))
+      .filter((_, __, all) => all.length > 1),
     available: p.is_in_stock,
     collectionGender: gender
   }

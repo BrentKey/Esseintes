@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import type {
   Alert,
+  Colorway,
   AlertKind,
   Facet,
   HomeData,
@@ -138,6 +139,9 @@ export function openDb(file: string) {
   ensureColumn('products', 'position', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('promotions', 'dismissed', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('stores', 'scope', 'TEXT')
+  ensureColumn('products', 'colors', "TEXT NOT NULL DEFAULT '[]'")
+  // Clear "just reduced" flags left by exchange-rate wobble before markdowns needed to be 5%+.
+  db.prepare('UPDATE products SET price_dropped_at = NULL, previous_price = NULL WHERE previous_price IS NOT NULL AND price > previous_price * ?').run(1 - MARKDOWN)
   // Lets queries filter by the user's sizes using the same fuzzy matching as the UI.
   loadRates()
   db.function('to_display', { deterministic: false }, (amount: unknown, currency: unknown) =>
@@ -264,6 +268,7 @@ export interface StoredProductInput {
   available: boolean
   /** Order in the store's own feed, used to interleave stores in "newest". */
   position: number
+  colors: Colorway[]
 }
 
 export function existingProducts(storeId: number) {
@@ -281,19 +286,22 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
   if (!existing) {
     db.prepare(
       `INSERT INTO products (id, store_id, external_id, title, brand, description, url, product_type, tags, category, gender,
-        images, price, compare_at_price, currency, sizes, available, first_seen_at, initial, last_seen_at, updated_at, position)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        images, price, compare_at_price, currency, sizes, available, first_seen_at, initial, last_seen_at, updated_at, position, colors)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       p.id, p.storeId, p.externalId, p.title, p.brand, p.description, p.url, p.productType, JSON.stringify(p.tags),
       p.category, p.gender, JSON.stringify(p.images), p.price, p.compareAtPrice, p.currency, sizesJson,
-      p.available ? 1 : 0, ts, initial ? 1 : 0, ts, ts, p.position
+      p.available ? 1 : 0, ts, initial ? 1 : 0, ts, ts, p.position, JSON.stringify(p.colors)
     )
     recordPrice(p.id, p.price, p.compareAtPrice, ts)
   } else {
-    const priceChanged = Math.abs(existing.price - p.price) > 0.001 || (existing.compare_at_price ?? null) !== p.compareAtPrice
+    // Stores that sell in several currencies often let Shopify convert prices
+    // automatically, so they wobble by a dollar or two as exchange rates move.
+    // Treat small changes as noise and only call a real markdown a drop.
+    const priceChanged = changedMeaningfully(existing.price, p.price) || changedMeaningfully(existing.compare_at_price, p.compareAtPrice)
     if (priceChanged) {
       recordPrice(p.id, p.price, p.compareAtPrice, ts)
-      if (p.price < existing.price - 0.001) {
+      if (p.price <= existing.price * (1 - MARKDOWN)) {
         priceDroppedAt = ts
         previousPrice = existing.price
       }
@@ -302,20 +310,31 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
       `UPDATE products SET title = ?, brand = ?, description = ?, url = ?, product_type = ?, tags = ?, category = ?, gender = ?,
         images = ?, price = ?, compare_at_price = ?, currency = ?, sizes = ?, available = ?, last_seen_at = ?, removed_at = NULL, position = ?,
         updated_at = CASE WHEN ? THEN ? ELSE updated_at END,
-        price_dropped_at = COALESCE(?, CASE WHEN price_dropped_at IS NOT NULL AND ? > price + 0.001 THEN NULL ELSE price_dropped_at END),
-        previous_price = COALESCE(?, CASE WHEN ? > price + 0.001 THEN NULL ELSE previous_price END)
+        price_dropped_at = COALESCE(?, CASE WHEN ? > COALESCE(previous_price, price) * (1 - ?) THEN NULL ELSE price_dropped_at END),
+        previous_price = COALESCE(?, CASE WHEN ? > COALESCE(previous_price, price) * (1 - ?) THEN NULL ELSE previous_price END),
+        colors = ?
        WHERE id = ?`
     ).run(
       p.title, p.brand, p.description, p.url, p.productType, JSON.stringify(p.tags), p.category, p.gender,
       JSON.stringify(p.images), p.price, p.compareAtPrice, p.currency, sizesJson, p.available ? 1 : 0, ts, p.position,
       priceChanged || existing.sizes !== sizesJson || !!existing.available !== p.available ? 1 : 0, ts,
-      priceDroppedAt, p.price, previousPrice, p.price, p.id
+      priceDroppedAt, p.price, MARKDOWN, previousPrice, p.price, MARKDOWN, JSON.stringify(p.colors), p.id
     )
   }
   db.prepare('DELETE FROM product_sizes WHERE product_id = ?').run(p.id)
   const ins = db.prepare('INSERT INTO product_sizes (product_id, label, norm, available) VALUES (?, ?, ?, ?)')
   for (const s of p.sizes) ins.run(p.id, s.label, normalizeSize(s.label), s.available ? 1 : 0)
   return { priceDropped: priceDroppedAt !== null }
+}
+
+/** Smallest drop that counts as a markdown (5%). */
+const MARKDOWN = 0.05
+/** Changes under 2% are treated as exchange-rate noise. */
+const NOISE = 0.02
+
+function changedMeaningfully(before: number | null, after: number | null): boolean {
+  if (before == null || after == null) return (before == null) !== (after == null)
+  return Math.abs(after - before) > Math.max(0.01, before * NOISE)
 }
 
 function recordPrice(id: string, price: number, compare: number | null, ts: string) {
@@ -465,6 +484,9 @@ function rowToProduct(r: any): Product {
     sizes: JSON.parse(r.sizes),
     available: !!r.available,
     firstSeenAt: r.first_seen_at,
+    // Items loaded when a store is first added aren't "new" arrivals.
+    isNew: !r.initial && Date.now() - new Date(r.first_seen_at).getTime() < 7 * 86_400_000,
+    colors: JSON.parse(r.colors ?? '[]'),
     priceDroppedAt: r.price_dropped_at,
     previousPrice: converted ? conv(r.previous_price) : r.previous_price,
     favorite: !!r.favorite

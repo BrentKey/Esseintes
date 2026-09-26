@@ -35,7 +35,20 @@ const CATEGORY_RULES: [string, RegExp][] = [
   ['Other Accessories', /\b(umbrellas?|lanyards?|accessor(y|ies)|patches|pins?|badges?|cleaning cloth|cases?|straps?|phone|airpods|keyrings?|sachets?)\b/]
 ]
 
+// Item words in a title that beat the store's product type. Some stores file
+// everything under one type (an eyewear brand calling its cases, cloths and
+// lens sprays "sunglasses"), but the title names the actual thing.
+const TITLE_OVERRIDES: [string, RegExp][] = [
+  ['Wallets & Leather Goods', /\b(card ?(holders?|cases?|wallets?)|wallets?)\b/],
+  ['Other Accessories', /\b((?<!(brief|suit|pillow) ?)cases?|cleaners?|cleansers?|cleaning|cloths?|care kit|kits?|straps?|cords?|retainers?|refills?|lanyards?)\b/],
+  ['Grooming', /\b(fragrances?|eau de (parfum|toilette)|cologne|perfumes?|candles?)\b/]
+]
+
 export function classifyCategory(productType: string, title: string, tags: string[]): string {
+  const t0 = normalize(title)
+  // …unless the title also names a bag or shoe ("Chain Strap Bag", "Strap Sandal").
+  if (!/\b(bags?|backpacks?|totes?|sandals?|shoes?|boots?|loafers?|sneakers?)\b/.test(t0))
+    for (const [name, re] of TITLE_OVERRIDES) if (re.test(t0)) return name
   // Product type is the most deliberate signal, then the title, then the tags.
   for (const text of [productType, title, tags.join(' , ')]) {
     const t = normalize(text)

@@ -35,7 +35,8 @@ export function wishlistAlerts(
 ): NewAlert[] {
   const alerts: NewAlert[] = []
 
-  if (after.price < before.price - 0.001) {
+  // 5%+ only: smaller moves are usually a store's automatic currency conversion.
+  if (after.price <= before.price * 0.95) {
     const pct = Math.round((1 - after.price / before.price) * 100)
     alerts.push({
       productId: after.id,

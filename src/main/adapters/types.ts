@@ -1,4 +1,4 @@
-import type { Gender, Platform, Size } from '@shared/types'
+import type { Colorway, Gender, Platform, Size } from '@shared/types'
 
 /** A product as read from a store, before classification and storage. */
 export interface RawProduct {
@@ -15,6 +15,8 @@ export interface RawProduct {
   compareAtPrice: number | null
   currency: string | null
   sizes: Size[]
+  /** Colour options; empty when the product comes in one colour. */
+  colors: Colorway[]
   available: boolean
   /** Gender implied by the store collection the product was found in. */
   collectionGender: Gender | null
