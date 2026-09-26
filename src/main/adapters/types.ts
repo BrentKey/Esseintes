@@ -22,6 +22,8 @@ export interface RawProduct {
   collectionGender: Gender | null
   /** Found in the store's kids' collection. */
   kids?: boolean
+  /** Category of the most specific store collection the product is in. */
+  storeCategory?: string | null
 }
 
 export interface FetchResult {

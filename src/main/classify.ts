@@ -1,5 +1,5 @@
 import type { Gender } from '@shared/types'
-import { WOMEN_ONLY_CATEGORIES } from '@shared/categories'
+import { departmentOf, WOMEN_ONLY_CATEGORIES } from '@shared/categories'
 
 // Ordered: the first matching rule wins, so specific items come before the
 // generic words they contain ("t-shirt" before "shirt", "sunglasses" before "glasses").
@@ -22,7 +22,7 @@ const CATEGORY_RULES: [string, RegExp][] = [
   ['Sweats & Hoodies', /\b(hoodies?|hooded|sweatshirts?|sweats?|crewneck sweat|track ?tops?|zip[- ]?ups?|(half|quarter)[- ]?zip|fleece|\w*fleece)\b/],
   ['Polos', /\b(polos?(?! ?necks?)|polo shirts?|rugby)\b/],
   ['Knitwear', /\b(knit(?!(ted)? ties?\b)|knits|knitted(?! ties?\b)|knitwear|sweaters?|jumpers?|cardigans?|pullovers?|turtlenecks?|roll ?necks?|merino|cashmere crew|mock ?neck|crew ?necks?|v-?necks?)\b/],
-  ['T-Shirts & Tops', /\b(t-?shirts?|tees?|tank|tanks|vests?|singlets?|base ?layers?|henleys?|long ?sleeves?|longsleeves?|tops?|camisoles?|bodysuits?|jerseys?(?! (trousers?|pants|shorts|joggers?|shirts?|polos?|dress)))\b/],
+  ['T-Shirts & Tops', /\b(t-?shirts?|tees?|tank|tanks|vests?|singlets?|base ?layers?|henleys?|longsleeves?|tops?|camisoles?|bodysuits?|jerseys?(?! (trousers?|pants|shorts|joggers?|shirts?|polos?|dress)))\b/],
   ['Shirts', /\b(shirts?|overshirts?|oxford|button[- ]?down|flannel|shirting)\b/],
   ['Jeans', /\b(jeans?|denim trousers|selvedge)\b/],
   ['Trousers', /\b(trousers?|pants|chinos?|joggers?|sweatpants|slacks|cargos?|fatigues?|bottoms|tights)\b/],
@@ -33,7 +33,7 @@ const CATEGORY_RULES: [string, RegExp][] = [
   ['Scarves & Gloves', /\b(scarf|scarves|snoods?|\w*gloves?|neck (warmers?|gaiters?|coolers?|clooers?)|mittens?|foulards?|shawls?|bandanas?|neckerchiefs?)\b/],
   ['Ties & Pocket Squares', /\b(ties?|bow ?ties?|neckties?|pocket squares?|cravats?)\b/],
   ['Home & Lifestyle', /\b(napkins?|table ?cloths?|tablelcoths?|table runners?|tea towels?|placemats?|coasters?|mugs?|cups?|books?|magazines?|issue \d+|printed (matter|goods)|posters?|prints?|blankets?|throws?|towels?|cushions?|homewares?|trays?|bowls?|plates?|vases?|carafes?|bottle openers?|glassware|ceramics?|incense|souvenirs?|kitchen|wine|bikes?|bicycles?|bar tape|playing cards|games?|stationery|notebooks?|pens?|objects?|decor|lighters?|ashtrays?|matches|match ?box(es)?|flasks?|tumblers?|set of \d|speedcups?)\b/],
-  ['Other Accessories', /\b(umbrellas?|lanyards?|patches|pins?|badges?|cleaning cloth|cases?|phone|airpods|keyrings?|sachets?)\b/]
+  ['Other Accessories', /\b(umbrellas?|lanyards?|(arm |leg )?sleeves|patches|pins?|badges?|cleaning cloth|cases?|phone|airpods|keyrings?|sachets?)\b/]
 ]
 
 // Item words in a title that beat the store's product type. Some stores file
@@ -56,13 +56,55 @@ const SUN_LENS = /\b(sun|solar|polari[sz]ed|tinted|photochromic|mirror(ed)? lens
  * `extra` carries weaker hints (URL path, colourway names) that only settle
  * whether a frame is sun or optical.
  */
-export function classifyCategory(productType: string, title: string, tags: string[], extra = ''): string {
+const ruleFor = (text: string) => {
+  const t = normalize(text)
+  return t ? (CATEGORY_RULES.find(([, re]) => re.test(t))?.[0] ?? null) : null
+}
+
+/** A category for a store's own collection name ("Running Pants", "shirts-men"), or null for catch-alls. */
+export function collectionCategory(handle: string, title: string): string | null {
+  const c = ruleFor(`${title} ${handle.replace(/-/g, ' ')}`)
+  return c && c !== 'Other' && c !== 'Other Accessories' ? c : null
+}
+
+// Description words only settle garments and accessories; descriptions mention
+// "prints", "books" and "home" too casually to trust for anything else.
+const DESCRIPTION_DEPARTMENTS = ['Clothing', 'Shoes', 'Bags', 'Accessories']
+
+/**
+ * `extra` carries weaker hints (URL path, colourway names) that only settle
+ * whether a frame is sun or optical. `storeCategory` is the category of the
+ * most specific store collection the product sits in.
+ */
+export function classifyCategory(
+  productType: string,
+  title: string,
+  tags: string[],
+  extra = '',
+  storeCategory: string | null = null,
+  description = ''
+): string {
   const pt = normalize(productType)
   if (SUN_TYPE.test(pt)) return 'Sunglasses'
   const t0 = normalize(title)
   // …unless the title also names a bag or shoe ("Chain Strap Bag", "Strap Sandal").
   if (!/\b(bags?|backpacks?|totes?|sandals?|shoes?|boots?|loafers?|sneakers?)\b/.test(t0))
     for (const [name, re] of TITLE_OVERRIDES) if (re.test(t0)) return name
+  // The store's own category decides when the title is vague or misleading
+  // ("…Block Print" trousers). A title naming a specific item still wins within
+  // the same department (a "Shirt" in a store's "Tops"), and a wearable item in a
+  // store's homeware/souvenir collection stays wearable. Eyewear always follows
+  // the store's sun/optical sorting.
+  if (storeCategory) {
+    const fromTitle = ruleFor(title)
+    const wearable = (c: string) => departmentOf(c) !== 'Lifestyle'
+    const storeWins =
+      ['Sunglasses', 'Glasses'].includes(storeCategory) ||
+      !fromTitle ||
+      !wearable(fromTitle) ||
+      (wearable(storeCategory) && departmentOf(fromTitle) !== departmentOf(storeCategory))
+    if (storeWins) return storeCategory
+  }
   // Product type is the most deliberate signal, then the title, then the tags.
   let found = 'Other'
   for (const text of [productType, title, tags.join(' , ')]) {
@@ -77,6 +119,12 @@ export function classifyCategory(productType: string, title: string, tags: strin
   if (found === 'Glasses' && !OPTICAL_TYPE.test(pt)) {
     const hints = normalize([title, tags.join(' '), extra.replace(/[-/]/g, ' ')].join(' '))
     if (SUN_LENS.test(hints) && !/\b(clear|demo|blue ?light|rx|optical)\b/.test(normalize(title))) return 'Sunglasses'
+  }
+  // A generic type like "Top" or "T-Shirt" shouldn't turn a named shirt into a tee.
+  if (found === 'T-Shirts & Tops' && /\b(?<!t-?|sweat|over)shirts?\b/.test(t0) && !/\b(t-?shirts?|tees?)\b/.test(t0)) return 'Shirts'
+  if (found === 'Other' && description) {
+    const fromDescription = ruleFor(description.slice(0, 400))
+    if (fromDescription && DESCRIPTION_DEPARTMENTS.includes(departmentOf(fromDescription))) return fromDescription
   }
   // A store's catch-all "Accessories" type is the last resort, not the first.
   if (found === 'Other' && /\baccessor(y|ies)\b/.test(normalize([productType, tags.join(' ')].join(' ')))) return 'Other Accessories'

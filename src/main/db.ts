@@ -147,6 +147,12 @@ export function openDb(file: string) {
   ensureColumn('products', 'new_color_name', 'TEXT')
   ensureColumn('favorites', 'size', 'TEXT')
   ensureColumn('stores', 'source', 'TEXT')
+  runOnce('reset-price-history-2026-09-27', () => {
+    // Earlier versions recorded prices from mis-read catalogues; start the history
+    // again from each product's current price.
+    db.exec('DELETE FROM price_history; UPDATE products SET price_dropped_at = NULL, previous_price = NULL')
+    db.prepare('INSERT INTO price_history (product_id, price, compare_at_price, recorded_at) SELECT id, price, compare_at_price, ? FROM products').run(now())
+  })
   runOnce('clear-drops-from-catalogue-switch', () =>
     // Markdowns flagged when stores first switched to their English/US catalogue weren't real.
     db.exec('UPDATE products SET price_dropped_at = NULL, previous_price = NULL')

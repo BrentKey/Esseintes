@@ -206,7 +206,14 @@ function foldRxSizes(sizes: Size[]): Size[] {
 }
 
 function toStored(store: Store, raw: RawProduct, id: string, currency: string, brand: string): Omit<db.StoredProductInput, 'position'> {
-  const category = classifyCategory(raw.productType, raw.title, raw.tags, [urlPath(raw.url), ...(raw.colors ?? []).map((c) => c.name)].join(' '))
+  const category = classifyCategory(
+    raw.productType,
+    raw.title,
+    raw.tags,
+    [urlPath(raw.url), ...(raw.colors ?? []).map((c) => c.name)].join(' '),
+    raw.storeCategory ?? null,
+    htmlToText(raw.descriptionHtml)
+  )
   const gender = classifyGender({ productType: raw.productType, title: raw.title, tags: raw.tags, url: raw.url }, category, raw.collectionGender)
   const { base, colour } = modelOf(raw.title)
   return {

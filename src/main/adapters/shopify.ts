@@ -1,6 +1,6 @@
 import type { Colorway, Gender, Size } from '@shared/types'
 import { load } from 'cheerio'
-import { collectionGender, isKids, isSizeOption } from '../classify'
+import { collectionCategory, collectionGender, isKids, isSizeOption } from '../classify'
 import { fetchJson, fetchText, HttpError, mapLimit, sleep, tryFetchJson } from '../http'
 import type { Adapter, FetchResult, RawProduct } from './types'
 
@@ -100,14 +100,17 @@ interface ShopifyCollection {
 // The few largest collections per gender cover nearly every product; more
 // only adds minutes of downloading on big stores.
 const MAX_COLLECTIONS_PER_GENDER = 4
-const COLLECTION_CONCURRENCY = 3
+const COLLECTION_CONCURRENCY = 4
+const MAX_CATEGORY_COLLECTIONS = 24
 
 /**
  * Labels products using the store's own men's/women's collections. The
  * largest few per gender cover almost everything; a product found in both
  * is unisex. Products in a kids' collection are reported separately.
  */
-async function genderMembership(base: string): Promise<{ genders: Map<number, Gender>; kids: Set<number> }> {
+async function genderMembership(
+  base: string
+): Promise<{ genders: Map<number, Gender>; kids: Set<number>; categories: Map<number, string> }> {
   const collections: ShopifyCollection[] = []
   for (let page = 1; page <= 4; page++) {
     const data = await tryFetchJson<{ collections: ShopifyCollection[] }>(`${base}/collections.json?limit=250&page=${page}`)
@@ -121,7 +124,26 @@ async function genderMembership(base: string): Promise<{ genders: Map<number, Ge
       .filter((c) => (c.products_count ?? 1) > 0 && match(c))
       .sort((a, b) => (b.products_count ?? 0) - (a.products_count ?? 0))
       .slice(0, n)
-  const jobs: { handle: string; label: 'men' | 'women' | 'kids' }[] = [
+  // The store's own category collections ("Shirts", "Running Pants"): up to two of
+  // the largest per category, skipping catch-alls that hold half the catalogue.
+  const biggest = Math.max(1, ...collections.map((c) => c.products_count ?? 0))
+  const byCategory = new Map<string, ShopifyCollection[]>()
+  for (const c of collections) {
+    const cat = collectionCategory(c.handle, c.title)
+    if (!cat || !(c.products_count ?? 1) || (c.products_count ?? 0) > biggest * 0.5) continue
+    byCategory.set(cat, [...(byCategory.get(cat) ?? []), c])
+  }
+  const categoryJobs = [...byCategory]
+    .flatMap(([cat, cs]) =>
+      cs
+        .sort((a, b) => (b.products_count ?? 0) - (a.products_count ?? 0))
+        .slice(0, 2)
+        .map((c) => ({ handle: c.handle, label: 'category' as const, cat, size: c.products_count ?? Infinity }))
+    )
+    .slice(0, MAX_CATEGORY_COLLECTIONS)
+
+  const jobs: { handle: string; label: 'men' | 'women' | 'kids' | 'category'; cat?: string; size?: number }[] = [
+    ...categoryJobs,
     ...largest((c) => collectionGender(c.handle, c.title) === 'men', MAX_COLLECTIONS_PER_GENDER).map((c) => ({ handle: c.handle, label: 'men' as const })),
     ...largest((c) => collectionGender(c.handle, c.title) === 'women', MAX_COLLECTIONS_PER_GENDER).map((c) => ({ handle: c.handle, label: 'women' as const })),
     ...largest((c) => isKids(c.handle, c.title), 3).map((c) => ({ handle: c.handle, label: 'kids' as const }))
@@ -129,11 +151,16 @@ async function genderMembership(base: string): Promise<{ genders: Map<number, Ge
 
   const found = new Map<number, Set<'men' | 'women'>>()
   const kids = new Set<number>()
-  await mapLimit(jobs, COLLECTION_CONCURRENCY, async ({ handle, label }) => {
+  // For each product, the category of the smallest (most specific) collection it's in.
+  const categories = new Map<number, { cat: string; size: number }>()
+  await mapLimit(jobs, COLLECTION_CONCURRENCY, async ({ handle, label, cat, size }) => {
     try {
       for (const p of (await fetchCollection(base, `/collections/${handle}`)).products) {
         if (label === 'kids') kids.add(p.id)
-        else (found.get(p.id) ?? found.set(p.id, new Set()).get(p.id)!).add(label)
+        else if (label === 'category') {
+          const prev = categories.get(p.id)
+          if (!prev || size! < prev.size) categories.set(p.id, { cat: cat!, size: size! })
+        } else (found.get(p.id) ?? found.set(p.id, new Set()).get(p.id)!).add(label)
       }
     } catch {
       /* membership is a hint only */
@@ -142,7 +169,7 @@ async function genderMembership(base: string): Promise<{ genders: Map<number, Ge
 
   const map = new Map<number, Gender>()
   for (const [id, set] of found) map.set(id, set.size === 2 ? 'unisex' : [...set][0])
-  return { genders: map, kids }
+  return { genders: map, kids, categories: new Map([...categories].map(([id, c]) => [id, c.cat])) }
 }
 
 function toRaw(base: string, p: ShopifyProduct, currency: string | null, gender: Gender | null, kids: boolean): RawProduct {
@@ -245,9 +272,9 @@ export const shopify: Adapter = {
     const { products, complete } = await fetchCollection(root, '', onProgress)
     // Collections are looked up on the main site: translated handles (e.g. Boglioli's
     // "uomo" shown as "man" under /en-us) often return nothing in the English catalogue.
-    const { genders, kids } = await genderMembership(base)
+    const { genders, kids, categories } = await genderMembership(base)
     return {
-      products: products.map((p) => toRaw(root, p, currency, genders.get(p.id) ?? null, kids.has(p.id))),
+      products: products.map((p) => ({ ...toRaw(root, p, currency, genders.get(p.id) ?? null, kids.has(p.id)), storeCategory: categories.get(p.id) ?? null })),
       currency,
       complete,
       source: root
