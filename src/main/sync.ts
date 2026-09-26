@@ -170,7 +170,9 @@ function inferStoreGender(genders: string[]): 'men' | 'women' | null {
   const men = genders.filter((g) => g === 'men').length
   const women = genders.filter((g) => g === 'women').length
   const labelled = men + women
-  if (labelled < 5) return null
+  // A handful of labelled items isn't enough to judge a whole store (Our Legacy
+  // labelled a few women's pieces and left its menswear unmarked).
+  if (labelled < Math.max(5, genders.length * 0.3)) return null
   if (men / labelled >= 0.9) return 'men'
   if (women / labelled >= 0.9) return 'women'
   return null
@@ -214,7 +216,11 @@ function toStored(store: Store, raw: RawProduct, id: string, currency: string, b
     raw.storeCategory ?? null,
     htmlToText(raw.descriptionHtml)
   )
-  const gender = classifyGender({ productType: raw.productType, title: raw.title, tags: raw.tags, url: raw.url }, category, raw.collectionGender)
+  const gender = classifyGender(
+    { productType: raw.productType, title: raw.title, tags: raw.tags, url: raw.url, description: htmlToText(raw.descriptionHtml) },
+    category,
+    raw.collectionGender
+  )
   const { base, colour } = modelOf(raw.title)
   return {
     id,

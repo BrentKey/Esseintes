@@ -148,7 +148,7 @@ const UNISEX = /\b(unisex|genderless|gender neutral|all gender|genderfluid)\b/
  * men's/women's sections) is more reliable and wins when available.
  */
 export function classifyGender(
-  texts: { productType: string; title: string; tags: string[]; url: string },
+  texts: { productType: string; title: string; tags: string[]; url: string; description?: string },
   category: string,
   collectionHint: Gender | null
 ): Gender {
@@ -160,6 +160,12 @@ export function classifyGender(
   if (WOMEN.test(titleText) && !MEN.test(titleText)) return 'women'
   if (MEN.test(titleText) && !WOMEN.test(titleText)) return 'men'
   if (collectionHint) return collectionHint
+  // Some stores only say it in the description ("… Men's Knitwear. Fall 2026.").
+  // Only the possessive form counts: descriptions mention "her" or "women" casually.
+  const d = (texts.description ?? '').toLowerCase().replace(/[’']/g, '')
+  const mensDesc = /\bmens\b/.test(d)
+  const womensDesc = /\bwomens\b/.test(d)
+  if (mensDesc !== womensDesc) return mensDesc ? 'men' : 'women'
 
   let path = ''
   try {
