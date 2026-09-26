@@ -1,0 +1,212 @@
+import { load } from 'cheerio'
+import type { Store, SyncStatus, SyncStoreResult } from '@shared/types'
+import { generic } from './adapters/generic'
+import { shopify } from './adapters/shopify'
+import type { Adapter, RawProduct } from './adapters/types'
+import { woocommerce } from './adapters/woocommerce'
+import { type NewAlert, wishlistAlerts } from './alerts'
+import { classifyCategory, classifyGender } from './classify'
+import * as db from './db'
+import { mapLimit } from './http'
+import { refreshRates } from './currency'
+import { detectPromotions } from './promotions'
+
+const ADAPTERS: Adapter[] = [shopify, woocommerce, generic]
+const STORE_CONCURRENCY = 3
+const NOT_A_PRODUCT = /\b(gift ?cards?|e-?gift|gift ?vouchers?|gift ?certificates?|shipping protection|route package protection)\b/i
+
+let status: SyncStatus = { running: false, currentStore: null, completed: 0, total: 0, lastRunAt: null, results: [] }
+let listener: (s: SyncStatus) => void = () => {}
+let alertListener: (alerts: NewAlert[]) => void = () => {}
+
+export function onStatus(fn: (s: SyncStatus) => void) {
+  listener = fn
+}
+
+/** Called once per sync run with any new wishlist alerts. */
+export function onAlerts(fn: (alerts: NewAlert[]) => void) {
+  alertListener = fn
+}
+
+export function getStatus(): SyncStatus {
+  return status
+}
+
+function emit(patch: Partial<SyncStatus>) {
+  status = { ...status, ...patch }
+  listener(status)
+}
+
+export async function detectPlatform(base: string): Promise<Adapter> {
+  for (const a of ADAPTERS) if (await a.detect(base)) return a
+  return generic
+}
+
+export function htmlToText(html: string): string {
+  if (!html) return ''
+  const $ = load(html)
+  $('script, style, iframe').remove()
+  $('br').replaceWith('\n')
+  $('p, div, li, h1, h2, h3, h4, h5, h6, tr').each((_, el) => {
+    $(el).append('\n')
+  })
+  $('li').each((_, el) => {
+    $(el).prepend('• ')
+  })
+  return $.root()
+    .text()
+    .replace(/[ \t ]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\n+• *\n*/g, '\n• ')
+    .trim()
+}
+
+async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreResult> {
+  const result: SyncStoreResult = { storeId: store.id, storeName: store.name, added: 0, updated: 0, removed: 0, priceDrops: 0, error: null }
+  try {
+    const adapter = store.platform ? ADAPTERS.find((a) => a.platform === store.platform)! : await detectPlatform(store.url)
+    if (!store.platform) db.updateStore(store.id, { platform: adapter.platform })
+
+    const fetched = await adapter.fetchAll(store.url, () => {})
+    if (!fetched.products.length) throw new Error('No products found. The store may be empty, or it may block automated access.')
+    const existing = db.existingProducts(store.id)
+    const liveBefore = [...existing.values()].filter((r) => !r.removed_at).length
+    const initial = existing.size === 0
+    const currency = fetched.currency ?? store.currency ?? 'USD'
+    const settings = db.getSettings()
+    const favorites = db.favoriteIds()
+    const storeAlerts: NewAlert[] = []
+
+    // Classify everything first so the store's overall mix can inform unlabelled items.
+    const byId = new Map<string, Omit<db.StoredProductInput, 'position'>>()
+    for (const raw of fetched.products) {
+      if (NOT_A_PRODUCT.test(`${raw.productType} ${raw.title}`)) continue
+      const id = `${store.id}:${raw.externalId}`
+      if (!byId.has(id)) byId.set(id, toStored(store, raw, id, currency))
+    }
+    const storeGender = inferStoreGender([...byId.values()].map((p) => p.gender))
+    if (storeGender) for (const p of byId.values()) if (p.gender === 'unknown') p.gender = storeGender
+    db.updateStore(store.id, { gender: storeGender ?? 'mixed' })
+
+    // Only keep the user's department: drop items that belong to the other one.
+    const unwanted = settings.gender === 'men' ? 'women' : settings.gender === 'women' ? 'men' : null
+    const wanted = [...byId.values()].filter((p) => p.gender !== unwanted)
+    const seen = new Set<string>()
+
+    db.transaction(() => {
+      for (const stored of wanted) {
+        const id = stored.id
+        seen.add(id)
+        const prev = existing.get(id)
+        const next = { ...stored, position: seen.size }
+        const { priceDropped } = db.upsertProduct(next, initial, prev)
+        if (prev && favorites.has(id)) storeAlerts.push(...wishlistAlerts(prev, next, settings.mySizes, db.formatPrice))
+        if (!prev) result.added++
+        else result.updated++
+        if (priceDropped) result.priceDrops++
+      }
+
+      // Only retire products when we trust the fetch was complete; a partial
+      // response (rate limit, outage) shouldn't wipe out the catalogue. A
+      // department change legitimately shrinks it, so skip the check then.
+      const scopeChanged = store.scope !== settings.gender
+      const plausible = scopeChanged || seen.size >= liveBefore * 0.5
+      if (fetched.complete && plausible) {
+        const gone = [...existing.entries()].filter(([id, r]) => !seen.has(id) && !r.removed_at).map(([id]) => id)
+        db.markRemoved(gone)
+        result.removed = gone.length
+      }
+      db.insertAlerts(storeAlerts)
+    })
+    alerts.push(...storeAlerts)
+
+    try {
+      db.replaceDetectedPromotions(store.id, await detectPromotions(store.url))
+    } catch {
+      /* homepage unreachable: keep previous promotions */
+    }
+    db.updateStore(store.id, { lastSyncedAt: new Date().toISOString(), lastError: null, currency, scope: settings.gender })
+  } catch (e) {
+    result.error = e instanceof Error ? e.message : String(e)
+    db.updateStore(store.id, { lastError: result.error })
+  }
+  return result
+}
+
+/**
+ * A store whose labelled items are overwhelmingly one gender (a menswear
+ * brand, say) is treated as that gender for items it doesn't label.
+ */
+function inferStoreGender(genders: string[]): 'men' | 'women' | null {
+  const men = genders.filter((g) => g === 'men').length
+  const women = genders.filter((g) => g === 'women').length
+  const labelled = men + women
+  if (labelled < 5) return null
+  if (men / labelled >= 0.9) return 'men'
+  if (women / labelled >= 0.9) return 'women'
+  return null
+}
+
+// Vendor fields sometimes hold placeholders or social handles rather than a brand.
+function cleanBrand(brand: string, storeName: string): string {
+  const b = brand.trim()
+  if (!b || b.startsWith('@') || /^(not specified|default|vendor|unknown|n\/a|none|-)$/i.test(b)) return storeName
+  // "Drakes - UK/ROW", "Drakes - AW26" etc. are internal vendor splits of the house brand.
+  const key = (s: string) => s.toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '')
+  if (key(b).startsWith(key(storeName)) && key(storeName).length >= 3) return storeName
+  return b
+}
+
+function toStored(store: Store, raw: RawProduct, id: string, currency: string): Omit<db.StoredProductInput, 'position'> {
+  const category = classifyCategory(raw.productType, raw.title, raw.tags)
+  return {
+    id,
+    storeId: store.id,
+    externalId: raw.externalId,
+    title: raw.title,
+    brand: cleanBrand(raw.brand, store.name),
+    description: htmlToText(raw.descriptionHtml),
+    url: raw.url,
+    productType: raw.productType,
+    tags: raw.tags,
+    category,
+    gender: classifyGender({ productType: raw.productType, title: raw.title, tags: raw.tags, url: raw.url }, category, raw.collectionGender),
+    images: raw.images,
+    price: raw.price,
+    compareAtPrice: raw.compareAtPrice,
+    currency: raw.currency ?? currency,
+    sizes: raw.sizes,
+    available: raw.available
+  }
+}
+
+// Requests made while a sync is running are queued; null means "all stores".
+let queued: Set<number> | null | undefined
+
+export async function runSync(storeId?: number): Promise<void> {
+  if (status.running) {
+    if (storeId == null) queued = null
+    else if (queued !== null) (queued ??= new Set()).add(storeId)
+    return
+  }
+  const stores = db.listStores().filter((s) => s.enabled && (storeId == null || s.id === storeId))
+  if (!stores.length) return
+  emit({ running: true, completed: 0, total: stores.length, currentStore: stores[0].name, results: [] })
+  await refreshRates()
+  const results: SyncStoreResult[] = []
+  const alerts: NewAlert[] = []
+  await mapLimit(stores, STORE_CONCURRENCY, async (store) => {
+    emit({ currentStore: store.name })
+    results.push(await syncStore(store, alerts))
+    emit({ completed: results.length, results: [...results] })
+  })
+  db.purgeOldRemoved()
+  emit({ running: false, currentStore: null, lastRunAt: new Date().toISOString() })
+  if (alerts.length) alertListener(alerts)
+
+  const next = queued
+  queued = undefined
+  if (next === null) await runSync()
+  else if (next) for (const id of next) await runSync(id)
+}
