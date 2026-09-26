@@ -16,7 +16,11 @@ export function Home() {
 
   if (!data) return null
   const empty = data.newIn.length === 0
-  const heroImages = data.newIn.slice(0, 3)
+  // The hero shows three different stores; the What's New row carries on from there without repeating them.
+  const heroImages: typeof data.newIn = []
+  for (const p of data.newIn) if (heroImages.length < 3 && !heroImages.some((h) => h.storeId === p.storeId)) heroImages.push(p)
+  for (const p of data.newIn) if (heroImages.length < 3 && !heroImages.includes(p)) heroImages.push(p)
+  const whatsNew = data.newIn.filter((p) => !heroImages.includes(p)).slice(0, 8)
 
   if (empty) {
     return (
@@ -56,7 +60,7 @@ export function Home() {
                 go(
                   data.newSinceLastVisit > 0
                     ? { page: 'shop', title: 'New Since Your Last Visit', query: { newSince: data.previousVisitAt ?? undefined } }
-                    : { page: 'shop', title: "What's New", query: { sort: 'newest' } }
+                    : { page: 'shop', title: "What's New", query: { sort: 'newest', individual: true } }
                 )
               }
             >
@@ -111,8 +115,8 @@ export function Home() {
       )}
 
       <section className="section">
-        <SectionHead title="What’s New" action="Shop all" onAction={() => go({ page: 'shop', title: "What's New", query: { sort: 'newest' } })} />
-        <ProductGrid products={data.newIn.slice(0, 8)} />
+        <SectionHead title="What’s New" action="Shop all" onAction={() => go({ page: 'shop', title: "What's New", query: { sort: 'newest', individual: true } })} />
+        <ProductGrid products={whatsNew} />
       </section>
 
       {data.justReduced.length > 0 && (

@@ -73,3 +73,17 @@ export function timeAgo(iso: string | null): string {
 export function isRecent(iso: string | null, days: number): boolean {
   return !!iso && Date.now() - new Date(iso).getTime() < days * 86_400_000
 }
+
+const EN = /\b(the|and|with|in|of|for|is|made|from|this|our)\b/gi
+const OTHER = /\b(il|la|le|les|di|della|del|con|per|è|und|der|die|das|mit|für|el|los|las|con|para|est|des|une|avec|dans|questo|realizzato)\b/gi
+
+/** Rough check for descriptions that aren't in English. */
+export function looksForeign(text: string): boolean {
+  if (/[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]/.test(text)) return true
+  return (text.match(OTHER)?.length ?? 0) > (text.match(EN)?.length ?? 0) + 2
+}
+
+/** Opens a store page through Google Translate in the user's browser. */
+export function translateUrl(url: string): string {
+  return `https://translate.google.com/translate?sl=auto&tl=en&u=${encodeURIComponent(url)}`
+}

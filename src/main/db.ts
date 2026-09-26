@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite'
 import type {
   Alert,
   Colorway,
+  ModelColourway,
   AlertKind,
   Facet,
   HomeData,
@@ -140,6 +141,12 @@ export function openDb(file: string) {
   ensureColumn('promotions', 'dismissed', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn('stores', 'scope', 'TEXT')
   ensureColumn('products', 'colors', "TEXT NOT NULL DEFAULT '[]'")
+  ensureColumn('products', 'model_key', 'TEXT')
+  ensureColumn('products', 'color_label', 'TEXT')
+  ensureColumn('products', 'new_color_at', 'TEXT')
+  ensureColumn('products', 'new_color_name', 'TEXT')
+  ensureColumn('favorites', 'size', 'TEXT')
+  db.exec('CREATE INDEX IF NOT EXISTS products_model ON products(model_key)')
   // Clear "just reduced" flags left by exchange-rate wobble before markdowns needed to be 5%+.
   db.prepare('UPDATE products SET price_dropped_at = NULL, previous_price = NULL WHERE previous_price IS NOT NULL AND price > previous_price * ?').run(1 - MARKDOWN)
   // Lets queries filter by the user's sizes using the same fuzzy matching as the UI.
@@ -269,11 +276,15 @@ export interface StoredProductInput {
   /** Order in the store's own feed, used to interleave stores in "newest". */
   position: number
   colors: Colorway[]
+  /** Groups separate listings of the same model (one per colour) together. */
+  modelKey: string
+  /** Colour named in the listing's title ("Slip On – Black" → "Black"), if any. */
+  colorLabel: string | null
 }
 
 export function existingProducts(storeId: number) {
   const rows = db
-    .prepare('SELECT id, price, compare_at_price, sizes, available, removed_at FROM products WHERE store_id = ?')
+    .prepare('SELECT id, price, compare_at_price, sizes, colors, available, removed_at FROM products WHERE store_id = ?')
     .all(storeId) as any[]
   return new Map(rows.map((r) => [r.id as string, r]))
 }
@@ -286,12 +297,13 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
   if (!existing) {
     db.prepare(
       `INSERT INTO products (id, store_id, external_id, title, brand, description, url, product_type, tags, category, gender,
-        images, price, compare_at_price, currency, sizes, available, first_seen_at, initial, last_seen_at, updated_at, position, colors)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        images, price, compare_at_price, currency, sizes, available, first_seen_at, initial, last_seen_at, updated_at, position, colors,
+        model_key, color_label)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       p.id, p.storeId, p.externalId, p.title, p.brand, p.description, p.url, p.productType, JSON.stringify(p.tags),
       p.category, p.gender, JSON.stringify(p.images), p.price, p.compareAtPrice, p.currency, sizesJson,
-      p.available ? 1 : 0, ts, initial ? 1 : 0, ts, ts, p.position, JSON.stringify(p.colors)
+      p.available ? 1 : 0, ts, initial ? 1 : 0, ts, ts, p.position, JSON.stringify(p.colors), p.modelKey, p.colorLabel
     )
     recordPrice(p.id, p.price, p.compareAtPrice, ts)
   } else {
@@ -306,19 +318,24 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
         previousPrice = existing.price
       }
     }
+    // A colour added to a listing we already had is a new arrival in its own right.
+    const known = new Set((JSON.parse(existing.colors || '[]') as Colorway[]).map((c) => c.name))
+    const newColor = known.size ? (p.colors.find((c) => !known.has(c.name))?.name ?? null) : null
     db.prepare(
       `UPDATE products SET title = ?, brand = ?, description = ?, url = ?, product_type = ?, tags = ?, category = ?, gender = ?,
         images = ?, price = ?, compare_at_price = ?, currency = ?, sizes = ?, available = ?, last_seen_at = ?, removed_at = NULL, position = ?,
         updated_at = CASE WHEN ? THEN ? ELSE updated_at END,
         price_dropped_at = COALESCE(?, CASE WHEN ? > COALESCE(previous_price, price) * (1 - ?) THEN NULL ELSE price_dropped_at END),
         previous_price = COALESCE(?, CASE WHEN ? > COALESCE(previous_price, price) * (1 - ?) THEN NULL ELSE previous_price END),
-        colors = ?
+        colors = ?, model_key = ?, color_label = ?,
+        new_color_at = COALESCE(?, new_color_at), new_color_name = COALESCE(?, new_color_name)
        WHERE id = ?`
     ).run(
       p.title, p.brand, p.description, p.url, p.productType, JSON.stringify(p.tags), p.category, p.gender,
       JSON.stringify(p.images), p.price, p.compareAtPrice, p.currency, sizesJson, p.available ? 1 : 0, ts, p.position,
       priceChanged || existing.sizes !== sizesJson || !!existing.available !== p.available ? 1 : 0, ts,
-      priceDroppedAt, p.price, MARKDOWN, previousPrice, p.price, MARKDOWN, JSON.stringify(p.colors), p.id
+      priceDroppedAt, p.price, MARKDOWN, previousPrice, p.price, MARKDOWN, JSON.stringify(p.colors), p.modelKey, p.colorLabel,
+      newColor ? ts : null, newColor, p.id
     )
   }
   db.prepare('DELETE FROM product_sizes WHERE product_id = ?').run(p.id)
@@ -460,6 +477,8 @@ export function formatPrice(amount: number, currency: string): string {
 
 // ---------- products (read side) ----------
 
+const recent = (iso: string | null) => !!iso && Date.now() - new Date(iso).getTime() < 7 * 86_400_000
+
 function rowToProduct(r: any): Product {
   const display = cachedSettings().currency
   // Converted prices are approximate anyway, so show them in whole units.
@@ -485,16 +504,20 @@ function rowToProduct(r: any): Product {
     available: !!r.available,
     firstSeenAt: r.first_seen_at,
     // Items loaded when a store is first added aren't "new" arrivals.
-    isNew: !r.initial && Date.now() - new Date(r.first_seen_at).getTime() < 7 * 86_400_000,
+    isNew: (!r.initial && recent(r.first_seen_at)) || recent(r.new_color_at),
+    newColor: recent(r.new_color_at) ? r.new_color_name : null,
     colors: JSON.parse(r.colors ?? '[]'),
+    colorLabel: r.color_label ?? null,
+    colourCount: Number(r.model_colors ?? Math.max(1, JSON.parse(r.colors ?? '[]').length)),
     priceDroppedAt: r.price_dropped_at,
     previousPrice: converted ? conv(r.previous_price) : r.previous_price,
-    favorite: !!r.favorite
+    favorite: !!r.favorite,
+    favoriteSize: r.favorite_size ?? null
   }
 }
 
 const productSelect = `
-  SELECT p.*, s.name AS store_name, (f.product_id IS NOT NULL) AS favorite
+  SELECT p.*, s.name AS store_name, (f.product_id IS NOT NULL) AS favorite, f.size AS favorite_size
   FROM products p
   JOIN stores s ON s.id = p.store_id
   LEFT JOIN favorites f ON f.product_id = p.id`
@@ -550,12 +573,19 @@ function buildWhere(q: ProductQuery, settings: Settings, skip?: FacetKey): Where
   if (q.justReduced) add('p.price_dropped_at > ?', daysAgo(REDUCED_WINDOW_DAYS))
   if (q.newSince) add('p.first_seen_at > ? AND p.initial = 0', q.newSince)
   if (q.favoritesOnly) add('f.product_id IS NOT NULL')
+  // In stock in the size saved with the item (or, with none saved, any of my sizes; one-size items count).
+  if (q.inMySize)
+    add(`p.available = 1 AND (NOT EXISTS (SELECT 1 FROM product_sizes ps WHERE ps.product_id = p.id)
+      OR EXISTS (SELECT 1 FROM product_sizes ps WHERE ps.product_id = p.id AND ps.available = 1
+        AND (ps.label = f.size OR (f.size IS NULL AND my_size(ps.label) = 1))))`)
   if (q.minPrice != null) add('to_display(p.price, p.currency) >= ?', q.minPrice)
   if (q.maxPrice != null) add('to_display(p.price, p.currency) <= ?', q.maxPrice)
   return w
 }
 
-const NEWEST = 'p.initial ASC, substr(p.first_seen_at, 1, 13) DESC, p.position ASC, p.store_id'
+// A new colour of an existing listing counts as new, from the moment it appeared.
+const NEWEST = `CASE WHEN p.new_color_at IS NOT NULL THEN 0 ELSE p.initial END ASC,
+  substr(COALESCE(p.new_color_at, p.first_seen_at), 1, 13) DESC, p.position ASC, p.store_id`
 const ORDER: Record<string, string> = {
   newest: NEWEST,
   'price-asc': 'to_display(p.price, p.currency) ASC',
@@ -563,25 +593,30 @@ const ORDER: Record<string, string> = {
   discount: 'CASE WHEN p.compare_at_price IS NULL THEN 0 ELSE (p.compare_at_price - p.price) / p.compare_at_price END DESC, p.first_seen_at DESC'
 }
 
+/** Browsing shows one card per model; What's New and the collection show each colourway. */
+const grouped = (q: ProductQuery) => !q.individual && !q.favoritesOnly && !q.newSince
+const MODEL = 'COALESCE(p.model_key, p.id)'
+
 function facet(q: ProductQuery, settings: Settings, key: FacetKey): Facet[] {
   const w = buildWhere(q, settings, key)
   const where = w.sql.join(' AND ')
   const from = `FROM products p JOIN stores s ON s.id = p.store_id LEFT JOIN favorites f ON f.product_id = p.id WHERE ${where}`
+  const count = grouped(q) ? `COUNT(DISTINCT ${MODEL})` : 'COUNT(DISTINCT p.id)'
   let rows: any[]
   switch (key) {
     case 'category':
-      rows = db.prepare(`SELECT p.category AS value, p.category AS label, COUNT(*) AS count ${from} GROUP BY p.category ORDER BY count DESC`).all(...w.params) as any[]
+      rows = db.prepare(`SELECT p.category AS value, p.category AS label, ${count} AS count ${from} GROUP BY p.category ORDER BY count DESC`).all(...w.params) as any[]
       break
     case 'store':
-      rows = db.prepare(`SELECT p.store_id AS value, s.name AS label, COUNT(*) AS count ${from} GROUP BY p.store_id ORDER BY s.name COLLATE NOCASE`).all(...w.params) as any[]
+      rows = db.prepare(`SELECT p.store_id AS value, s.name AS label, ${count} AS count ${from} GROUP BY p.store_id ORDER BY s.name COLLATE NOCASE`).all(...w.params) as any[]
       break
     case 'brand':
-      rows = db.prepare(`SELECT p.brand AS value, p.brand AS label, COUNT(*) AS count ${from} AND p.brand != '' GROUP BY p.brand ORDER BY p.brand COLLATE NOCASE`).all(...w.params) as any[]
+      rows = db.prepare(`SELECT p.brand AS value, p.brand AS label, ${count} AS count ${from} AND p.brand != '' GROUP BY p.brand ORDER BY p.brand COLLATE NOCASE`).all(...w.params) as any[]
       break
     case 'size':
       rows = db
         .prepare(
-          `SELECT ps.norm AS value, ps.norm AS label, COUNT(DISTINCT p.id) AS count
+          `SELECT ps.norm AS value, ps.norm AS label, ${count} AS count
            FROM products p JOIN stores s ON s.id = p.store_id LEFT JOIN favorites f ON f.product_id = p.id
            JOIN product_sizes ps ON ps.product_id = p.id AND ps.available = 1
            WHERE ${where} GROUP BY ps.norm ORDER BY count DESC LIMIT 60`
@@ -596,14 +631,29 @@ export function queryProducts(q: ProductQuery): ProductPage {
   const settings = cachedSettings()
   const w = buildWhere(q, settings)
   const where = w.sql.join(' AND ')
-  const total = (db
-    .prepare(`SELECT COUNT(*) AS n FROM products p JOIN stores s ON s.id = p.store_id LEFT JOIN favorites f ON f.product_id = p.id WHERE ${where}`)
-    .get(...w.params) as any).n
-  const items = (db
-    .prepare(`${productSelect} WHERE ${where} ORDER BY ${ORDER[q.sort ?? 'newest'] ?? ORDER.newest} LIMIT ? OFFSET ?`)
-    .all(...w.params, q.limit ?? 60, q.offset ?? 0) as any[]).map(rowToProduct)
+  const order = ORDER[q.sort ?? 'newest'] ?? ORDER.newest
+  const from = `FROM products p JOIN stores s ON s.id = p.store_id LEFT JOIN favorites f ON f.product_id = p.id WHERE ${where}`
+  let total: number
+  let rows: any[]
+  if (grouped(q)) {
+    total = Number((db.prepare(`SELECT COUNT(DISTINCT ${MODEL}) AS n ${from}`).get(...w.params) as any).n)
+    // The best-matching listing represents each model; colourways are counted across all of them.
+    rows = db
+      .prepare(
+        `WITH m AS (
+           SELECT p.*, s.name AS store_name, (f.product_id IS NOT NULL) AS favorite, f.size AS favorite_size,
+             ROW_NUMBER() OVER (PARTITION BY ${MODEL} ORDER BY ${order}) AS rn,
+             SUM(MAX(1, json_array_length(p.colors))) OVER (PARTITION BY ${MODEL}) AS model_colors
+           ${from})
+         SELECT * FROM m p WHERE rn = 1 ORDER BY ${order} LIMIT ? OFFSET ?`
+      )
+      .all(...w.params, q.limit ?? 60, q.offset ?? 0) as any[]
+  } else {
+    total = Number((db.prepare(`SELECT COUNT(*) AS n ${from}`).get(...w.params) as any).n)
+    rows = db.prepare(`${productSelect} WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...w.params, q.limit ?? 60, q.offset ?? 0) as any[]
+  }
   return {
-    items,
+    items: rows.map(rowToProduct),
     total,
     facets: {
       categories: facet(q, settings, 'category'),
@@ -623,13 +673,48 @@ export function getProduct(id: string): ProductDetail | null {
   const history = (db
     .prepare('SELECT price, compare_at_price, recorded_at FROM price_history WHERE product_id = ? ORDER BY recorded_at')
     .all(id) as any[]).map((h) => ({ price: conv(h.price)!, compareAtPrice: conv(h.compare_at_price), recordedAt: h.recorded_at }))
-  return { ...product, priceHistory: history, promotions: listPromotions(product.storeId) }
+  return { ...product, priceHistory: history, promotions: listPromotions(product.storeId), model: modelColourways(r) }
+}
+
+/**
+ * Every colourway of a model, across however the store lists them: several
+ * colours inside one listing, one listing per colour, or a mix.
+ */
+function modelColourways(r: any): ModelColourway[] {
+  const siblings = (db
+    .prepare(`${productSelect} WHERE p.removed_at IS NULL AND ${r.model_key ? 'p.model_key = ?' : 'p.id = ?'} ORDER BY p.available DESC, p.position`)
+    .all(r.model_key ?? r.id) as any[]).map(rowToProduct)
+  const out: ModelColourway[] = []
+  for (const s of siblings) {
+    if (s.colors.length > 1) {
+      for (const c of s.colors)
+        out.push({
+          productId: s.id,
+          name: c.name,
+          image: c.image ?? s.images[0] ?? null,
+          images: c.images?.length ? c.images : c.image ? [c.image] : s.images,
+          available: c.available && s.available,
+          isNew: s.newColor === c.name || (s.isNew && !s.newColor)
+        })
+    } else {
+      out.push({
+        productId: s.id,
+        name: s.colorLabel ?? s.colors[0]?.name ?? null,
+        image: s.images[0] ?? null,
+        images: s.images,
+        available: s.available,
+        isNew: s.isNew
+      })
+    }
+  }
+  return out
 }
 
 // ---------- wishlist alerts ----------
 
-export function favoriteIds(): Set<string> {
-  return new Set((db.prepare('SELECT product_id FROM favorites').all() as any[]).map((r) => r.product_id))
+/** Saved products and the size saved with each (null when none was chosen). */
+export function favoriteSizes(): Map<string, string | null> {
+  return new Map((db.prepare('SELECT product_id, size FROM favorites').all() as any[]).map((r) => [r.product_id, r.size]))
 }
 
 export function insertAlerts(alerts: { productId: string; kind: AlertKind; message: string }[]) {
@@ -667,6 +752,13 @@ export function toggleFavorite(id: string): boolean {
   return !exists
 }
 
+/** Saves (or re-saves) a product to the collection with the size to track. */
+export function saveFavorite(id: string, size: string | null) {
+  db.prepare(
+    'INSERT INTO favorites (product_id, created_at, size) VALUES (?, ?, ?) ON CONFLICT(product_id) DO UPDATE SET size = excluded.size'
+  ).run(id, now(), size)
+}
+
 export function getHome(previousVisit: string | null): HomeData {
   const settings = cachedSettings()
   const base = baseWhere(settings)
@@ -689,7 +781,7 @@ export function getHome(previousVisit: string | null): HomeData {
     .all(...base.params) as any[]).map((r) => ({ name: r.name, count: Number(r.count), image: r.image }))
 
   return {
-    newIn: list('', NEWEST, 12),
+    newIn: list('', NEWEST, 24),
     previousVisitAt: previousVisit,
     alerts: listAlerts(12),
     newSinceLastVisit: previousVisit ? count('AND p.first_seen_at > ? AND p.initial = 0', previousVisit) : 0,

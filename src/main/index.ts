@@ -182,6 +182,7 @@ function registerIpc() {
   ipcMain.handle('products:query', (_e, q: ProductQuery) => db.queryProducts(q))
   ipcMain.handle('products:get', (_e, id: string) => db.getProduct(id))
   ipcMain.handle('products:favorite', (_e, id: string) => db.toggleFavorite(id))
+  ipcMain.handle('products:save-favorite', (_e, id: string, size: string | null) => db.saveFavorite(id, size))
   ipcMain.handle('home:get', () => db.getHome(previousVisit))
   ipcMain.handle('alerts:list', () => db.listAlerts())
   ipcMain.handle('currencies:list', () => db.availableCurrencies())
@@ -259,8 +260,11 @@ app.whenReady().then(async () => {
   createWindow()
   void refreshRates()
 
-  void sync.runSync()
-  scheduleRefresh()
+  // ESSEINTES_NO_AUTOSYNC=1 opens without re-reading every store (for quick testing).
+  if (!process.env.ESSEINTES_NO_AUTOSYNC) {
+    void sync.runSync()
+    scheduleRefresh()
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

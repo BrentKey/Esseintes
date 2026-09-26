@@ -20,6 +20,8 @@ export interface RawProduct {
   available: boolean
   /** Gender implied by the store collection the product was found in. */
   collectionGender: Gender | null
+  /** Found in the store's kids' collection. */
+  kids?: boolean
 }
 
 export interface FetchResult {

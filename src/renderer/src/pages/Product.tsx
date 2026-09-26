@@ -1,30 +1,33 @@
 import { useEffect, useState } from 'react'
-import type { Product as P, ProductDetail } from '@shared/types'
+import type { ModelColourway, Product as P, ProductDetail } from '@shared/types'
 import { External, Heart } from '../components/Icons'
 import { Price } from '../components/Price'
 import { ProductGrid } from '../components/ProductCard'
 import { useData } from '../data'
-import { api, bestSitewidePromo, compareSizes, money, sized } from '../lib'
+import { api, bestSitewidePromo, compareSizes, looksForeign, money, sized, translateUrl } from '../lib'
 import { useNav } from '../nav'
 
 export function Product({ id }: { id: string }) {
   const { go, back } = useNav()
   const { settings, updateSettings, bump } = useData()
   const [p, setP] = useState<ProductDetail | null>(null)
+  const [model, setModel] = useState<ModelColourway[]>([])
+  const [sel, setSel] = useState(0)
   const [more, setMore] = useState<P[]>([])
   const [img, setImg] = useState(0)
-  const [color, setColor] = useState<string | null>(null)
-  // A colourway's photo may not be in the main gallery, so it can override it.
-  const [colorImage, setColorImage] = useState<string | null>(null)
+  const [size, setSize] = useState<string | null>(null)
 
   useEffect(() => {
     setImg(0)
-    setColor(null)
-    setColorImage(null)
     api.getProduct(id).then((d) => {
       setP(d)
-      if (d)
-        api.queryProducts({ brands: [d.brand], limit: 9 }).then((r) => setMore(r.items.filter((x) => x.id !== d.id).slice(0, 8)))
+      if (!d) return
+      setModel(d.model)
+      setSize(d.favoriteSize)
+      // Open on the colour that was clicked (a newly added colour, if that's why it was shown).
+      const i = d.model.findIndex((c) => c.productId === d.id && (!d.newColor || c.name === d.newColor))
+      setSel(Math.max(0, i))
+      api.queryProducts({ brands: [d.brand], limit: 9 }).then((r) => setMore(r.items.filter((x) => x.id !== d.id).slice(0, 8)))
     })
   }, [id])
 
@@ -32,28 +35,51 @@ export function Product({ id }: { id: string }) {
   const promo = bestSitewidePromo(p.promotions, p.storeId)
   const sizes = [...p.sizes].sort((a, b) => compareSizes(a.label, b.label))
   const mine = new Set(settings.mySizes.map((s) => s.toUpperCase()))
+  const colour = model[sel]
+  const gallery = colour?.productId === p.id && colour.images.length ? colour.images : p.images
+
+  async function pickColour(i: number) {
+    const c = model[i]
+    setSel(i)
+    setImg(0)
+    // Colours listed separately by the store are their own products: load that one.
+    if (c.productId !== p!.id) {
+      const d = await api.getProduct(c.productId)
+      if (d) {
+        setP(d)
+        setSize(d.favoriteSize)
+      }
+    }
+  }
+
+  async function pickSize(label: string) {
+    const next = size === label ? null : label
+    setSize(next)
+    if (p!.favorite) {
+      await api.saveFavorite(p!.id, next)
+      bump()
+    }
+  }
+
+  async function toggleSaved() {
+    if (p!.favorite) await api.toggleFavorite(p!.id)
+    else await api.saveFavorite(p!.id, size)
+    setP({ ...p!, favorite: !p!.favorite, favoriteSize: p!.favorite ? null : size })
+    bump()
+  }
 
   return (
     <div className="page product">
       <div className="product-main">
         <div className="gallery">
           <div className="thumbs">
-            {p.images.slice(0, 10).map((src, i) => (
-              <button
-                key={src}
-                className={i === img && !colorImage ? 'on' : ''}
-                onClick={() => {
-                  setImg(i)
-                  setColorImage(null)
-                }}
-              >
+            {gallery.slice(0, 10).map((src, i) => (
+              <button key={src} className={i === img ? 'on' : ''} onClick={() => setImg(i)}>
                 <img src={sized(src, 160)} alt="" />
               </button>
             ))}
           </div>
-          <div className="gallery-main">
-            {(colorImage ?? p.images[img]) && <img src={sized(colorImage ?? p.images[img], 1400)} alt={p.title} />}
-          </div>
+          <div className="gallery-main">{gallery[img] && <img src={sized(gallery[img], 1400)} alt={p.title} />}</div>
         </div>
 
         <div className="product-info">
@@ -81,29 +107,21 @@ export function Product({ id }: { id: string }) {
             </div>
           )}
 
-          {p.colors.length > 1 && (
+          {model.length > 1 && (
             <div className="sizes">
               <div className="sizes-head">
-                {p.colors.length} colours{color ? `: ${color}` : ''}
+                {model.length} colours{colour?.name ? `: ${colour.name}` : ''}
               </div>
               <div className="color-grid">
-                {p.colors.map((c) => (
+                {model.map((c, i) => (
                   <button
-                    key={c.name}
-                    className={`color ${c.available ? '' : 'out'} ${color === c.name ? 'on' : ''}`}
-                    title={`${c.name}${c.available ? '' : ' (sold out)'}`}
-                    onClick={() => {
-                      setColor(c.name)
-                      if (!c.image) return
-                      const same = (a: string) => a.split('?')[0] === c.image!.split('?')[0]
-                      const i = p.images.findIndex(same)
-                      if (i >= 0) {
-                        setImg(i)
-                        setColorImage(null)
-                      } else setColorImage(c.image)
-                    }}
+                    key={`${c.productId}:${c.name ?? i}`}
+                    className={`color ${c.available ? '' : 'out'} ${i === sel ? 'on' : ''}`}
+                    title={`${c.name ?? `Colour ${i + 1}`}${c.available ? '' : ' (sold out)'}${c.isNew ? ' · new' : ''}`}
+                    onClick={() => pickColour(i)}
                   >
                     {c.image ? <img src={sized(c.image, 160)} alt="" /> : <span>{c.name}</span>}
+                    {c.isNew && <i className="color-new" />}
                   </button>
                 ))}
               </div>
@@ -112,16 +130,22 @@ export function Product({ id }: { id: string }) {
 
           {sizes.length > 0 && (
             <div className="sizes">
-              <div className="sizes-head">Sizes at {p.storeName}</div>
+              <div className="sizes-head">
+                Sizes at {p.storeName}
+                <span className="muted sizes-hint">
+                  {size ? (p.favorite ? `Tracking size ${size}` : `Size ${size} selected`) : 'Pick your size to track it'}
+                </span>
+              </div>
               <div className="size-grid">
                 {sizes.map((s) => (
-                  <span
+                  <button
                     key={s.label}
-                    className={`size ${s.available ? '' : 'out'} ${mine.has(s.label.toUpperCase()) ? 'mine' : ''}`}
-                    title={s.available ? 'In stock' : 'Sold out'}
+                    className={`size ${s.available ? '' : 'out'} ${mine.has(s.label.toUpperCase()) ? 'mine' : ''} ${size === s.label ? 'picked' : ''}`}
+                    title={s.available ? 'In stock' : 'Sold out: save it to hear when it’s back'}
+                    onClick={() => pickSize(s.label)}
                   >
                     {s.label}
-                  </span>
+                  </button>
                 ))}
               </div>
             </div>
@@ -133,11 +157,8 @@ export function Product({ id }: { id: string }) {
             </button>
             <button
               className={`btn btn-outline btn-icon ${p.favorite ? 'on' : ''}`}
-              onClick={async () => {
-                const favorite = await api.toggleFavorite(p.id)
-                setP({ ...p, favorite })
-                bump()
-              }}
+              onClick={toggleSaved}
+              title={p.favorite ? 'Remove from the collection' : size ? `Save in size ${size}` : 'Save to the collection'}
               aria-label="Add to the collection"
             >
               <Heart filled={p.favorite} />
@@ -148,6 +169,11 @@ export function Product({ id }: { id: string }) {
             <details className="details" open>
               <summary>Details</summary>
               <div className="description">{p.description}</div>
+              {looksForeign(p.description) && (
+                <button className="link small translate" onClick={() => api.openExternal(translateUrl(p.url))}>
+                  Read in English ↗
+                </button>
+              )}
             </details>
           )}
 

@@ -6,12 +6,13 @@ import { WOMEN_ONLY_CATEGORIES } from '@shared/categories'
 const CATEGORY_RULES: [string, RegExp][] = [
   ['Grooming', /\b(fragrances?|cologne|parfum|perfume|eau de|shampoo|conditioner|moisturi[sz]er|grooming|skincare|deodorant|shaving|razor|soap|body wash|hand cream|beard oil|candles?)\b/],
   ['Sunglasses', /\b(sunglass(es)?|sun ?glasses|shades)\b/],
-  ['Glasses', /\b(optical|opticals|eyeglass(es)?|spectacles|frames?|glasses|eyewear|prescription|lens(es)?|blue ?light)\b/],
+  ['Glasses', /\b(optical|opticals|eyeglass(es)?|spectacles|frames?|glasses|eyewear|prescription|lens(es)?|blue ?light (lens(es)?|glasses|filter|blocking))\b/],
   ['Watches', /\b(watch(?! ?caps?)(es)?|wristwatch(es)?|timepieces?|chronograph)\b/],
   ['Jewellery', /\b(ring(?![- ]?spun)s?|signet|necklaces?|bracelets?|earrings?|pendants?|jewell?ery|cufflinks?|bangles?|tie ?(bar|clip)s?|brooch(es)?)\b/],
   ['Shoes', /\b(shoes?|sneakers?|trainers?|boots?|loafers?|sandals?|slides?|derbys?|brogues?|mules?|espadrilles?|footwear|slippers?|clogs?|moccasins?|oxfords? shoes?|monk ?straps?)\b/],
-  ['Bags', /\b(bags?|backpacks?|totes?|holdalls?|duffle|duffel|briefcases?|rucksacks?|messenger|pouch(es)?|weekender|satchels?|crossbody|luggage|suitcases?)\b/],
+  ['Bags', /\b(bags?|carry-?alls?|backpacks?|totes?|holdalls?|duffle|duffel|briefcases?|rucksacks?|messenger|pouch(es)?|weekender|satchels?|crossbody|luggage|suitcases?)\b/],
   ['Ties & Pocket Squares', /\b(knit(ted)? ties?|silk ties?|neckties?|bow ?ties?)\b/],
+  ['Hats & Caps', /\b((knit(ted)?|wool|woolen|woollen|cashmere|merino|ribbed) (caps?|hats?)|beanies?)\b/],
   ['Swimwear', /\b(swim|swimwear|swimsuits?|swim ?shorts|board ?shorts|trunks swim)\b/],
   ['Underwear & Socks', /\b(socks?|boxers?|briefs|underwear|trunks|undershirts?|vest top|leg ?warmers?)\b/],
   ['Loungewear', /\b(pyjamas?|pajamas?|loungewear|robes?|dressing gown|nightwear|sleepwear)\b/],
@@ -26,13 +27,13 @@ const CATEGORY_RULES: [string, RegExp][] = [
   ['Jeans', /\b(jeans?|denim trousers|selvedge)\b/],
   ['Trousers', /\b(trousers?|pants|chinos?|joggers?|sweatpants|slacks|cargos?|fatigues?|bottoms)\b/],
   ['Dresses & Skirts', /\b(dress|dresses|skirts?|blouses?|bras?|bikinis?|leggings|jumpsuits?|gowns?|tunics?|kaftans?)\b/],
-  ['Hats & Caps', /\b(hats?|caps?|beanies?|beret|bucket hat|headwear|balaclavas?|fedora|flat cap|trapper)\b/],
+  ['Hats & Caps', /\b(hats?|caps?|beanies?|beret|bucket hat|headwear|balaclavas?|fedora|flat cap|trapper|ear ?warmers?|earmuffs?)\b/],
   ['Belts', /\b(belts?|braces|suspenders)\b/],
   ['Wallets & Leather Goods', /\b(wallets?|card ?(holders?|cases?|wallets?)|billfolds?|coin (purse|pouch)|key ?(rings?|chains?|holders?|fobs?)|passport (holders?|covers?)|leather goods|small leather)\b/],
   ['Scarves & Gloves', /\b(scarf|scarves|snoods?|gloves?|mittens?|foulards?|shawls?|bandanas?|neckerchiefs?)\b/],
   ['Ties & Pocket Squares', /\b(ties?|bow ?ties?|neckties?|pocket squares?|cravats?)\b/],
-  ['Home & Lifestyle', /\b(mugs?|cups?|books?|magazines?|issue \d+|printed (matter|goods)|posters?|prints?|blankets?|throws?|towels?|cushions?|homewares?|trays?|bowls?|plates?|vases?|carafes?|bottle openers?|glassware|ceramics?|incense|souvenirs?|kitchen|wine|bikes?|bicycles?|bar tape|playing cards|games?|stationery|notebooks?|pens?|objects?|decor|lighters?|ashtrays?)\b/],
-  ['Other Accessories', /\b(umbrellas?|lanyards?|accessor(y|ies)|patches|pins?|badges?|cleaning cloth|cases?|straps?|phone|airpods|keyrings?|sachets?)\b/]
+  ['Home & Lifestyle', /\b(mugs?|cups?|books?|magazines?|issue \d+|printed (matter|goods)|posters?|prints?|blankets?|throws?|towels?|cushions?|homewares?|trays?|bowls?|plates?|vases?|carafes?|bottle openers?|glassware|ceramics?|incense|souvenirs?|kitchen|wine|bikes?|bicycles?|bar tape|playing cards|games?|stationery|notebooks?|pens?|objects?|decor|lighters?|ashtrays?|matches|match ?box(es)?|flasks?|tumblers?|set of \d|speedcups?)\b/],
+  ['Other Accessories', /\b(umbrellas?|lanyards?|patches|pins?|badges?|cleaning cloth|cases?|phone|airpods|keyrings?|sachets?)\b/]
 ]
 
 // Item words in a title that beat the store's product type. Some stores file
@@ -40,22 +41,54 @@ const CATEGORY_RULES: [string, RegExp][] = [
 // lens sprays "sunglasses"), but the title names the actual thing.
 const TITLE_OVERRIDES: [string, RegExp][] = [
   ['Wallets & Leather Goods', /\b(card ?(holders?|cases?|wallets?)|wallets?)\b/],
-  ['Other Accessories', /\b((?<!(brief|suit|pillow) ?)cases?|cleaners?|cleansers?|cleaning|cloths?|care kit|kits?|straps?|cords?|retainers?|refills?|lanyards?)\b/],
+  // Deliberately narrow: "cloth" and "cord" are also fabrics ("Wool Cloth Jacket", "Cord Trousers").
+  ['Other Accessories', /\b((?<!(brief|suit|pillow) ?)cases?|cleaners?|cleansers?|cleaning|(cleaning|lens|polishing|microfib(re|er)) cloths?|care kit|kits?|(spectacle|eyewear|glasses|sunglass(es)?) (cords?|chains?|straps?)|retainers?|refills?|lanyards?)\b/],
   ['Grooming', /\b(fragrances?|eau de (parfum|toilette)|cologne|perfumes?|candles?)\b/]
 ]
 
-export function classifyCategory(productType: string, title: string, tags: string[]): string {
+// Eyewear product types that mean sunglasses (Oliver Peoples and Akoni use "Sun").
+const SUN_TYPE = /^(sun|sunwear|sun ?glass(es)?|sunglass(es)?|clip-? ?ons?|snow goggles?|goggles?)$/
+const OPTICAL_TYPE = /\b(optical|opticals|optics?|rx|prescription|eyeglass(es)?|ophthalmic)\b/
+// The only real difference between sunglasses and glasses is the lens.
+const SUN_LENS = /\b(sun|solar|polari[sz]ed|tinted|photochromic|mirror(ed)? lens|gradient|g-?15|uv ?400|(grey|gray|green|brown|dark|smoke|blue|rose) lens(es)?|dark (grey|gray|green|brown)|solid (black|grey|gray|brown|green))\b/
+
+/**
+ * `extra` carries weaker hints (URL path, colourway names) that only settle
+ * whether a frame is sun or optical.
+ */
+export function classifyCategory(productType: string, title: string, tags: string[], extra = ''): string {
+  const pt = normalize(productType)
+  if (SUN_TYPE.test(pt)) return 'Sunglasses'
   const t0 = normalize(title)
   // …unless the title also names a bag or shoe ("Chain Strap Bag", "Strap Sandal").
   if (!/\b(bags?|backpacks?|totes?|sandals?|shoes?|boots?|loafers?|sneakers?)\b/.test(t0))
     for (const [name, re] of TITLE_OVERRIDES) if (re.test(t0)) return name
   // Product type is the most deliberate signal, then the title, then the tags.
+  let found = 'Other'
   for (const text of [productType, title, tags.join(' , ')]) {
     const t = normalize(text)
     if (!t) continue
-    for (const [name, re] of CATEGORY_RULES) if (re.test(t)) return name
+    const hit = CATEGORY_RULES.find(([, re]) => re.test(t))
+    if (hit) {
+      found = hit[0]
+      break
+    }
   }
-  return 'Other'
+  if (found === 'Glasses' && !OPTICAL_TYPE.test(pt)) {
+    const hints = normalize([title, tags.join(' '), extra.replace(/[-/]/g, ' ')].join(' '))
+    if (SUN_LENS.test(hints) && !/\b(clear|demo|blue ?light|rx|optical)\b/.test(normalize(title))) return 'Sunglasses'
+  }
+  // A store's catch-all "Accessories" type is the last resort, not the first.
+  if (found === 'Other' && /\baccessor(y|ies)\b/.test(normalize([productType, tags.join(' ')].join(' ')))) return 'Other Accessories'
+  return found
+}
+
+// Plural forms only: "kid leather", "Beach Boy" and "baby alpaca" are adult items.
+const KIDS = /\b(kids|boys|girls|children|childrens|juniors?|toddlers?|infants?|youth|little ones|bambin[oi]|enfants?)\b/
+
+/** Children's clothing, which the app never collects. */
+export function isKids(...texts: string[]): boolean {
+  return KIDS.test(normalize(texts.join(' ').replace(/[-/]/g, ' ')))
 }
 
 const MEN = /\b(men|mens|man|male|menswear|homme|hommes|uomo|herren|him|gents?)\b/

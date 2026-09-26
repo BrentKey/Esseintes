@@ -13,6 +13,8 @@ export interface Colorway {
   name: string
   available: boolean
   image: string | null
+  /** All photos of this colour, when the store provides more than one. */
+  images?: string[]
 }
 
 export interface Store {
@@ -52,8 +54,16 @@ export interface Product {
   colors: Colorway[]
   available: boolean
   firstSeenAt: string
-  /** Arrived since the store was added (and within the last week). */
+  /** Arrived since the store was added (and within the last week), or gained a new colour. */
   isNew: boolean
+  /** Name of a colour added to this listing in the last week. */
+  newColor: string | null
+  /** Colour named in the listing's title, for stores that list each colour separately. */
+  colorLabel: string | null
+  /** Colourways across the whole model (all listings of it at the store). */
+  colourCount: number
+  /** Size saved with this item in the collection. */
+  favoriteSize: string | null
   priceDroppedAt: string | null
   previousPrice: number | null
   favorite: boolean
@@ -65,7 +75,18 @@ export interface PricePoint {
   recordedAt: string
 }
 
+/** One colour of a model, which may come from its own listing or a variant within one. */
+export interface ModelColourway {
+  productId: string
+  name: string | null
+  image: string | null
+  images: string[]
+  available: boolean
+  isNew: boolean
+}
+
 export interface ProductDetail extends Product {
+  model: ModelColourway[]
   priceHistory: PricePoint[]
   promotions: Promotion[]
 }
@@ -95,6 +116,10 @@ export interface ProductQuery {
   justReduced?: boolean
   newSince?: string
   favoritesOnly?: boolean
+  /** Only items in stock in the size saved with them (collection) or my sizes. */
+  inMySize?: boolean
+  /** Show every colourway separately instead of one card per model. */
+  individual?: boolean
   minPrice?: number
   maxPrice?: number
   sort?: SortKey
@@ -197,6 +222,7 @@ export interface Api {
   getProduct(id: string): Promise<ProductDetail | null>
   getHome(): Promise<HomeData>
   toggleFavorite(id: string): Promise<boolean>
+  saveFavorite(id: string, size: string | null): Promise<void>
   sync(storeId?: number): Promise<void>
   getSyncStatus(): Promise<SyncStatus>
   onSyncStatus(cb: (s: SyncStatus) => void): () => void

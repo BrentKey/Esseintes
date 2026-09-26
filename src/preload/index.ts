@@ -15,6 +15,7 @@ const api: Api = {
   getProduct: (id) => ipcRenderer.invoke('products:get', id),
   getHome: () => ipcRenderer.invoke('home:get'),
   toggleFavorite: (id) => ipcRenderer.invoke('products:favorite', id),
+  saveFavorite: (id, size) => ipcRenderer.invoke('products:save-favorite', id, size),
   sync: (storeId) => ipcRenderer.invoke('sync:run', storeId),
   getSyncStatus: () => ipcRenderer.invoke('sync:status'),
   onSyncStatus: (cb) => {

@@ -6,7 +6,18 @@ import { useNav } from '../nav'
 import { Heart } from './Icons'
 import { Price } from './Price'
 
-export function ProductCard({ product, onFavorite, note }: { product: Product; onFavorite?: (fav: boolean) => void; note?: string }) {
+export function ProductCard({
+  product,
+  onFavorite,
+  note,
+  showSaved
+}: {
+  product: Product
+  onFavorite?: (fav: boolean) => void
+  note?: string
+  /** In the collection, show the saved size and whether it's in stock. */
+  showSaved?: boolean
+}) {
   const { go } = useNav()
   const { promotions, bump } = useData()
   const [fav, setFav] = useState(product.favorite)
@@ -15,7 +26,10 @@ export function ProductCard({ product, onFavorite, note }: { product: Product; o
   const promo = bestSitewidePromo(promotions, product.storeId)
   const reduced = isRecent(product.priceDroppedAt, 14)
   const isNew = product.isNew
-  const img = hover && product.images[1] ? product.images[1] : product.images[0]
+  // A card for a newly added colour leads with that colour's photo.
+  const lead = (product.newColor && product.colors.find((c) => c.name === product.newColor)?.image) || product.images[0]
+  const img = hover && product.images[1] ? product.images[1] : lead
+  const savedSize = showSaved && product.favoriteSize ? product.sizes.find((s) => s.label === product.favoriteSize) : null
 
   async function toggle(e: React.MouseEvent) {
     e.stopPropagation()
@@ -39,7 +53,7 @@ export function ProductCard({ product, onFavorite, note }: { product: Product; o
         </button>
         <div className="card-badges">
           {reduced ? <span className="badge badge-sale">Just reduced</span> : pct ? <span className="badge badge-sale">−{pct}%</span> : null}
-          {!reduced && !pct && isNew && <span className="badge">New</span>}
+          {!reduced && !pct && isNew && <span className="badge">{product.newColor ? 'New colour' : 'New'}</span>}
           {promo && <span className="badge badge-promo">Extra {promo.percent}%</span>}
         </div>
       </div>
@@ -48,9 +62,14 @@ export function ProductCard({ product, onFavorite, note }: { product: Product; o
         <div className="card-brand">{product.brand}</div>
         <div className="card-title">{product.title}</div>
         <Price product={product} promo={promo} compact />
-        {(product.storeName !== product.brand || product.colors.length > 1) && (
+        {savedSize && (
+          <div className={`card-saved ${savedSize.available && product.available ? 'in' : 'out'}`}>
+            Size {savedSize.label} · {savedSize.available && product.available ? 'in stock' : 'sold out'}
+          </div>
+        )}
+        {(product.storeName !== product.brand || product.colourCount > 1) && (
           <div className="card-store">
-            {[product.storeName !== product.brand && product.storeName, product.colors.length > 1 && `${product.colors.length} colours`]
+            {[product.storeName !== product.brand && product.storeName, product.colourCount > 1 && `${product.colourCount} colours`]
               .filter(Boolean)
               .join(' · ')}
           </div>
@@ -60,11 +79,19 @@ export function ProductCard({ product, onFavorite, note }: { product: Product; o
   )
 }
 
-export function ProductGrid({ products, onFavorite }: { products: Product[]; onFavorite?: (p: Product, fav: boolean) => void }) {
+export function ProductGrid({
+  products,
+  onFavorite,
+  showSaved
+}: {
+  products: Product[]
+  onFavorite?: (p: Product, fav: boolean) => void
+  showSaved?: boolean
+}) {
   return (
     <div className="grid">
       {products.map((p) => (
-        <ProductCard key={p.id} product={p} onFavorite={(f) => onFavorite?.(p, f)} />
+        <ProductCard key={p.id} product={p} onFavorite={(f) => onFavorite?.(p, f)} showSaved={showSaved} />
       ))}
     </div>
   )

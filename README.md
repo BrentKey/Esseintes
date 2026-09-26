@@ -11,14 +11,15 @@ Nothing is hard-coded: stores, department (menswear / womenswear / both), curren
 ## Features
 
 - **One catalogue for all your stores.** Browse by department and category (shirts, knitwear, coats, shoes, sunglasses, hats…), store, designer, size and price, or search across everything.
-- **Only your department.** Pick menswear, womenswear or both once. Esseintes uses each store's own men's and women's collections to decide what to collect, and ignores the rest.
+- **Only your department.** Pick menswear, womenswear or both once. Esseintes uses each store's own men's and women's collections to decide what to collect, and ignores the rest, including kids' lines.
+- **In English.** Stores that publish an English version of their catalogue are read in English; other descriptions get a one-click link to a translated page.
 - **One currency.** Prices are converted to your currency (USD by default) at daily rates, with the store's own price shown alongside.
-- **Every colourway.** Frame, lens and fabric options are pulled in with their own photos, so you can flip between them on the product page.
+- **Every colourway, one card.** Whether a store lists colours as options or as separate products, each model gets one card, and its product page cycles through every colourway with that colour's own photos, sizes and stock. A newly added colour shows up in What's New on its own.
 - **Always current.** Every launch (and optionally every few hours while open) re-reads each store: new items are added, sold-out items disappear, prices and sizes update, and items a store removes are retired.
 - **New in and just reduced.** The home page leads with arrivals since your last visit and recent markdowns (5% or more, so a store's automatic currency rounding doesn't count). Every product keeps a price history.
 - **Store-wide sales.** Announcement banners on each store's homepage are scanned for offers like "Extra 20% off everything with code FALL20". Sitewide offers are shown on every product from that store, with an estimated final price. You can also add or dismiss sales by hand.
 - **Your sizes.** Save the sizes you wear; they're highlighted on product pages, and you can hide anything that isn't in stock in your size.
-- **Wishlist alerts.** A desktop notification when something you've saved drops in price or comes back in stock in your size; recent alerts also appear on the home page.
+- **The Collection.** Save pieces with the size you want (even when it's sold out), filter to what's available in your size, and get a notification when a saved piece drops in price or your size comes back.
 - **Hide what you don't want.** Hide a designer or a whole category from any product page, and manage the lists in Settings.
 - **Bring your list.** Paste several store addresses at once, or import a `.txt`/`.csv`/`.json` list. Export your stores to JSON to back them up or share them.
 - **Wishlist**, infinite scroll, and links straight to the product on the store's own site.

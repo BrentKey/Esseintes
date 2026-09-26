@@ -1,12 +1,12 @@
 import { load } from 'cheerio'
-import type { Store, SyncStatus, SyncStoreResult } from '@shared/types'
+import type { Size, Store, SyncStatus, SyncStoreResult } from '@shared/types'
 import { generic } from './adapters/generic'
 import { shopify } from './adapters/shopify'
 import type { Adapter, RawProduct } from './adapters/types'
 import { woocommerce } from './adapters/woocommerce'
 import { type NewAlert, wishlistAlerts } from './alerts'
 import { brandResolver } from './brands'
-import { classifyCategory, classifyGender } from './classify'
+import { classifyCategory, classifyGender, isKids } from './classify'
 import * as db from './db'
 import { mapLimit } from './http'
 import { refreshRates } from './currency'
@@ -78,11 +78,17 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
     const initial = existing.size === 0
     const currency = fetched.currency ?? store.currency ?? 'USD'
     const settings = db.getSettings()
-    const favorites = db.favoriteIds()
+    const favorites = db.favoriteSizes()
     const storeAlerts: NewAlert[] = []
 
     // Classify everything first so the store's overall mix can inform unlabelled items.
-    const products = fetched.products.filter((raw) => !NOT_A_PRODUCT.test(`${raw.productType} ${raw.title}`))
+    const products = fetched.products.filter(
+      (raw) =>
+        !NOT_A_PRODUCT.test(`${raw.productType} ${raw.title}`) &&
+        // Children's lines are never collected.
+        !raw.kids &&
+        !isKids(raw.title, raw.productType, raw.tags.join(' '), urlPath(raw.url))
+    )
     const brandOf = brandResolver(store.name, products.map((p) => p.brand))
     const byId = new Map<string, Omit<db.StoredProductInput, 'position'>>()
     for (const raw of products) {
@@ -105,7 +111,11 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
         const prev = existing.get(id)
         const next = { ...stored, position: seen.size }
         const { priceDropped } = db.upsertProduct(next, initial, prev)
-        if (prev && favorites.has(id)) storeAlerts.push(...wishlistAlerts(prev, next, settings.mySizes, db.formatPrice))
+        // Restocks are judged against the size saved with the item, else the user's sizes.
+        if (prev && favorites.has(id)) {
+          const size = favorites.get(id)
+          storeAlerts.push(...wishlistAlerts(prev, next, size ? [size] : settings.mySizes, db.formatPrice))
+        }
         if (!prev) result.added++
         else result.updated++
         if (priceDropped) result.priceDrops++
@@ -152,8 +162,39 @@ function inferStoreGender(genders: string[]): 'men' | 'women' | null {
   return null
 }
 
+const urlPath = (url: string) => {
+  try {
+    return new URL(url).pathname
+  } catch {
+    return ''
+  }
+}
+
+// Separators stores put between a model and its colour: "Slip On – Black", "Cord Trousers #Olive".
+const COLOUR_SUFFIX = /^(.*?\S)\s*(?:#\s*|\s[–—-]\s+)([^–—#]{1,32})$/
+
+/** Splits "Staples Slip On – Black" into the model ("staples slip on") and colour ("Black"). */
+export function modelOf(title: string): { base: string; colour: string | null } {
+  const t = title.replace(/\s+/g, ' ').trim()
+  const m = t.match(COLOUR_SUFFIX)
+  const base = (m ? m[1] : t).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  return { base, colour: m ? m[2].trim() : null }
+}
+
+/** Folds "54-17RX"-style prescription duplicates into the plain size. */
+function foldRxSizes(sizes: Size[]): Size[] {
+  const out = new Map<string, boolean>()
+  for (const s of sizes) {
+    const label = s.label.replace(/\s*[-/]?\s*RX$/i, '').trim()
+    if (label) out.set(label, (out.get(label) ?? false) || s.available)
+  }
+  return [...out].map(([label, available]) => ({ label, available }))
+}
+
 function toStored(store: Store, raw: RawProduct, id: string, currency: string, brand: string): Omit<db.StoredProductInput, 'position'> {
-  const category = classifyCategory(raw.productType, raw.title, raw.tags)
+  const category = classifyCategory(raw.productType, raw.title, raw.tags, [urlPath(raw.url), ...(raw.colors ?? []).map((c) => c.name)].join(' '))
+  const gender = classifyGender({ productType: raw.productType, title: raw.title, tags: raw.tags, url: raw.url }, category, raw.collectionGender)
+  const { base, colour } = modelOf(raw.title)
   return {
     id,
     storeId: store.id,
@@ -165,13 +206,15 @@ function toStored(store: Store, raw: RawProduct, id: string, currency: string, b
     productType: raw.productType,
     tags: raw.tags,
     category,
-    gender: classifyGender({ productType: raw.productType, title: raw.title, tags: raw.tags, url: raw.url }, category, raw.collectionGender),
+    gender,
     images: raw.images,
     price: raw.price,
     compareAtPrice: raw.compareAtPrice,
     currency: raw.currency ?? currency,
-    sizes: raw.sizes,
+    sizes: foldRxSizes(raw.sizes),
     colors: raw.colors ?? [],
+    modelKey: `${store.id}|${category}|${gender}|${base}`,
+    colorLabel: colour,
     available: raw.available
   }
 }

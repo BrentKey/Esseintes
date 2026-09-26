@@ -94,7 +94,7 @@ export function Header() {
       </div>
 
       <nav className="header-nav" onMouseLeave={() => setMenu(null)}>
-        <button onMouseEnter={() => setMenu(null)} onClick={() => shop("What's New", { sort: 'newest' })}>
+        <button onMouseEnter={() => setMenu(null)} onClick={() => shop("What's New", { sort: 'newest', individual: true })}>
           What’s New
         </button>
         {departments.map((d) => (

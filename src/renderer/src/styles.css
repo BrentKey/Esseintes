@@ -1324,3 +1324,53 @@ img {
 .color.out {
   opacity: 0.4;
 }
+.size {
+  background: transparent;
+  cursor: pointer;
+}
+.size:hover {
+  border-color: var(--ink);
+}
+.size.picked {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+  text-decoration: none;
+}
+.size.out.picked {
+  background: var(--ink-3);
+  border-color: var(--ink-3);
+}
+.sizes-hint {
+  margin-left: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 12px;
+}
+.color {
+  position: relative;
+}
+.color-new {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sale);
+}
+.translate {
+  margin-top: 10px;
+  display: inline-block;
+}
+.card-saved {
+  font-size: 12px;
+  margin-top: 2px;
+}
+.card-saved.in {
+  color: var(--promo);
+}
+.card-saved.out {
+  color: var(--ink-3);
+}

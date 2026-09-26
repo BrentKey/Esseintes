@@ -12,6 +12,7 @@ interface Filters {
   brands: string[]
   sizes: string[]
   onSale: boolean
+  inMySize: boolean
   sort: SortKey
   minPrice?: number
   maxPrice?: number
@@ -25,6 +26,7 @@ export function Shop({ title, subtitle, query }: { title: string; subtitle?: str
     brands: [],
     sizes: [],
     onSale: !!query.onSale,
+    inMySize: false,
     sort: query.sort ?? 'newest'
   })
   const [page, setPage] = useState<ProductPage | null>(null)
@@ -40,6 +42,7 @@ export function Shop({ title, subtitle, query }: { title: string; subtitle?: str
     brands: filters.brands.length ? filters.brands : query.brands,
     sizes: filters.sizes,
     onSale: filters.onSale || undefined,
+    inMySize: filters.inMySize || undefined,
     sort: filters.sort,
     minPrice: filters.minPrice,
     maxPrice: filters.maxPrice
@@ -100,6 +103,12 @@ export function Shop({ title, subtitle, query }: { title: string; subtitle?: str
           <div className="muted">{page ? `${page.total.toLocaleString()} ${page.total === 1 ? 'piece' : 'pieces'}` : ' '}</div>
         </div>
         <div className="shop-controls">
+          {query.favoritesOnly && (
+            <label className="toggle" title="In stock in the size you saved (or your sizes, if none was saved)">
+              <input type="checkbox" checked={filters.inMySize} onChange={(e) => setFilters({ ...filters, inMySize: e.target.checked })} />
+              Available in my size
+            </label>
+          )}
           {!query.onSale && (
             <label className="toggle">
               <input type="checkbox" checked={filters.onSale} onChange={(e) => setFilters({ ...filters, onSale: e.target.checked })} />
@@ -179,6 +188,7 @@ export function Shop({ title, subtitle, query }: { title: string; subtitle?: str
           ) : (
             <ProductGrid
               products={items}
+              showSaved={query.favoritesOnly}
               onFavorite={(p, fav) => {
                 if (query.favoritesOnly && !fav) setItems((xs) => xs.filter((x) => x.id !== p.id))
               }}
