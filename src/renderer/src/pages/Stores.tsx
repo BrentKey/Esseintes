@@ -4,7 +4,7 @@ import { useData } from '../data'
 import { api, timeAgo } from '../lib'
 import { useNav } from '../nav'
 
-const PLATFORM_LABEL: Record<string, string> = { shopify: 'Shopify', woocommerce: 'WooCommerce', generic: 'Generic (sitemap)' }
+const PLATFORM_LABEL: Record<string, string> = { shopify: 'Shopify', woocommerce: 'WooCommerce', depict: 'Centra (Depict)', generic: 'Generic (sitemap)' }
 
 export function Stores() {
   const { go } = useNav()

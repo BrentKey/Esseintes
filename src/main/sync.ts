@@ -1,5 +1,6 @@
 import { load } from 'cheerio'
 import type { Size, Store, SyncStatus, SyncStoreResult } from '@shared/types'
+import { depict } from './adapters/depict'
 import { generic } from './adapters/generic'
 import { shopify } from './adapters/shopify'
 import type { Adapter, RawProduct } from './adapters/types'
@@ -13,7 +14,7 @@ import { mapLimit } from './http'
 import { refreshRates } from './currency'
 import { detectPromotions } from './promotions'
 
-const ADAPTERS: Adapter[] = [shopify, woocommerce, generic]
+const ADAPTERS: Adapter[] = [shopify, woocommerce, depict, generic]
 const STORE_CONCURRENCY = 3
 // Listings that aren't things you'd buy on their own: gift cards, shipping
 // add-ons, and lens upgrades that eyewear stores list as separate products.
@@ -69,8 +70,10 @@ export function htmlToText(html: string): string {
 async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreResult> {
   const result: SyncStoreResult = { storeId: store.id, storeName: store.name, added: 0, updated: 0, removed: 0, priceDrops: 0, error: null }
   try {
-    const adapter = store.platform ? ADAPTERS.find((a) => a.platform === store.platform)! : await detectPlatform(store.url)
-    if (!store.platform) db.updateStore(store.id, { platform: adapter.platform })
+    // Stores on the generic fallback are re-checked, so they move to a dedicated reader once one exists.
+    const known = store.platform && store.platform !== 'generic' ? ADAPTERS.find((a) => a.platform === store.platform) : undefined
+    const adapter = known ?? (await detectPlatform(store.url))
+    if (adapter.platform !== store.platform) db.updateStore(store.id, { platform: adapter.platform })
 
     const fetched = await adapter.fetchAll(store.url, () => {})
     if (!fetched.products.length) throw new Error('No products found. The store may be empty, or it may block automated access.')

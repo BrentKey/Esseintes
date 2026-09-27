@@ -44,6 +44,18 @@ export async function fetchJson<T>(url: string): Promise<T> {
   }
 }
 
+export async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await net.fetch(url, {
+    method: 'POST',
+    credentials: 'omit',
+    headers: { ...HEADERS, Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000)
+  })
+  if (!res.ok) throw new HttpError(res.status, url)
+  return (await res.json()) as T
+}
+
 export async function tryFetchJson<T>(url: string): Promise<T | null> {
   try {
     return await fetchJson<T>(url)

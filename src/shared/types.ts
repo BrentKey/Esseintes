@@ -1,7 +1,7 @@
 export type Gender = 'men' | 'women' | 'unisex' | 'unknown'
 export type GenderPreference = 'men' | 'women' | 'all'
 export type StoreGender = 'mixed' | 'men' | 'women'
-export type Platform = 'shopify' | 'woocommerce' | 'generic'
+export type Platform = 'shopify' | 'woocommerce' | 'depict' | 'generic'
 
 export interface Size {
   label: string

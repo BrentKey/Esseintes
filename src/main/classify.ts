@@ -13,7 +13,7 @@ const CATEGORY_RULES: [string, RegExp][] = [
   ['Bags', /\b(bags?|carry-?alls?|backpacks?|totes?|holdalls?|duffle|duffel|briefcases?|rucksacks?|messenger|pouch(es)?|weekender|satchels?|crossbody|luggage|suitcases?)\b/],
   ['Ties & Pocket Squares', /\b(knit(ted)? ties?|silk ties?|neckties?|bow ?ties?)\b/],
   ['Hats & Caps', /\b((knit(ted)?|wool|woolen|woollen|cashmere|merino|ribbed) (caps?|hats?)|beanies?)\b/],
-  ['Swimwear', /\b(swim|swimwear|swimsuits?|swim ?shorts|board ?shorts|trunks swim)\b/],
+  ['Swimwear', /\b(swim|swimwear|swimsuits?|bathing ?suits?|swim ?shorts|board ?shorts|trunks swim)\b/],
   ['Underwear & Socks', /\b(socks?|boxers?|briefs|underwear|trunks|undershirts?|vest top|leg ?warmers?)\b/],
   ['Loungewear', /\b(pyjamas?|pajamas?|loungewear|robes?|dressing gown|nightwear|sleepwear)\b/],
   ['Shorts', /\b(shorts|bermudas?|half tights)\b/],
