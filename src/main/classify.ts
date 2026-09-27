@@ -161,8 +161,11 @@ export function classifyGender(
   // An explicit "Women's ..." in the title beats a store filing it under men.
   if (WOMEN.test(titleText) && !MEN.test(titleText)) return 'women'
   if (MEN.test(titleText) && !WOMEN.test(titleText)) return 'men'
-  // The store's own product type ("WOMENS SWEATERS") is its most deliberate label;
-  // tags and section membership are often messier (BODE tags women's pieces "MENS").
+  // Found only in the store's men's or only its women's sections: that settles it
+  // (BODE sells copies of men's pieces on its women's side, still typed "MENS").
+  if (collectionHint === 'men' || collectionHint === 'women') return collectionHint
+  // Otherwise the store's own product type ("WOMENS SWEATERS") is its most deliberate
+  // label; tags are often messier (BODE tags women's pieces "MENS").
   const typeText = normalize(texts.productType)
   if (WOMEN.test(typeText) && !MEN.test(typeText)) return 'women'
   if (MEN.test(typeText) && !WOMEN.test(typeText)) return 'men'

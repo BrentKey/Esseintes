@@ -103,6 +103,18 @@ interface ShopifyCollection {
 const MAX_COLLECTIONS_PER_GENDER = 4
 const COLLECTION_CONCURRENCY = 4
 const MAX_CATEGORY_COLLECTIONS = 24
+const MAX_MENU_COLLECTIONS_PER_GENDER = 20
+
+/** Handles of the collections linked from the store's homepage menus. */
+async function menuCollections(base: string): Promise<Set<string>> {
+  try {
+    const html = await fetchText(base)
+    return new Set([...html.matchAll(/href="(?:https?:\/\/[^"/]+)?(?:\/[a-z]{2}(?:-[a-z]{2})?)?\/collections\/([\w-]+)\/?["?#]/gi)].map((m) => m[1].toLowerCase()))
+  } catch {
+    return new Set()
+  }
+}
+
 // A collection's membership is re-read when its product count changes, or after this long.
 const MEMBERSHIP_TTL_MS = 24 * 3_600_000
 
@@ -170,6 +182,17 @@ async function genderMembership(
     ...largest((c) => collectionGender(c.handle, c.title) === 'women', MAX_COLLECTIONS_PER_GENDER).map((c) => ({ handle: c.handle, label: 'women' as const })),
     ...largest((c) => isKids(c.handle, c.title), 3).map((c) => ({ handle: c.handle, label: 'kids' as const }))
   ]
+
+  // Prefer the sections the store's own menus link to ("Men > Shirts", "Women > Dresses"):
+  // together they cover each department, where the largest few can miss pieces.
+  const menu = await menuCollections(base)
+  for (const g of ['men', 'women'] as const) {
+    const linked = collections.filter((c) => menu.has(c.handle) && (c.products_count ?? 1) > 0 && collectionGender(c.handle, c.title) === g)
+    if (linked.length < 2) continue
+    const keep = jobs.filter((j) => j.label !== g)
+    jobs.length = 0
+    jobs.push(...keep, ...linked.slice(0, MAX_MENU_COLLECTIONS_PER_GENDER).map((c) => ({ handle: c.handle, label: g })))
+  }
 
   const found = new Map<number, Set<'men' | 'women'>>()
   const kids = new Set<number>()
