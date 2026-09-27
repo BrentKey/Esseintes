@@ -139,6 +139,8 @@ export function isKids(...texts: string[]): boolean {
   return KIDS.test(normalize(texts.join(' ').replace(/[-/]/g, ' ')))
 }
 
+const INSPIRED_BY =
+  /\b(inspired by|based on|modell?ed (on|after)|adapted from|borrowed from|taken from|references?|referencing|reproduc\w*|recreat\w*|reinterpret\w*)\s+(\S+\s+){0,4}?(mens|womens)\b/g
 const MEN = /\b(men|mens|man|male|menswear|homme|hommes|uomo|herren|him|gents?)\b/
 const WOMEN = /\b(women|womens|wmns|woman|female|womenswear|ladies|lady|femme|femmes|donna|damen|her)\b/
 const UNISEX = /\b(unisex|genderless|gender neutral|all gender|genderfluid)\b/
@@ -159,10 +161,20 @@ export function classifyGender(
   // An explicit "Women's ..." in the title beats a store filing it under men.
   if (WOMEN.test(titleText) && !MEN.test(titleText)) return 'women'
   if (MEN.test(titleText) && !WOMEN.test(titleText)) return 'men'
+  // The store's own product type ("WOMENS SWEATERS") is its most deliberate label;
+  // tags and section membership are often messier (BODE tags women's pieces "MENS").
+  const typeText = normalize(texts.productType)
+  if (WOMEN.test(typeText) && !MEN.test(typeText)) return 'women'
+  if (MEN.test(typeText) && !WOMEN.test(typeText)) return 'men'
   if (collectionHint) return collectionHint
   // Some stores only say it in the description ("… Men's Knitwear. Fall 2026.").
   // Only the possessive form counts: descriptions mention "her" or "women" casually.
-  const d = (texts.description ?? '').toLowerCase().replace(/[’']/g, '')
+  // A garment's history ("inspired by a men's swimsuit from the 1920s") says
+  // nothing about who it's for, so those phrases are ignored.
+  const d = (texts.description ?? '')
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(INSPIRED_BY, ' ')
   const mensDesc = /\bmens\b/.test(d)
   const womensDesc = /\bwomens\b/.test(d)
   if (mensDesc !== womensDesc) return mensDesc ? 'men' : 'women'
