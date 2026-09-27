@@ -1,5 +1,6 @@
 import { load } from 'cheerio'
 import type { Size, Store, SyncStatus, SyncStoreResult } from '@shared/types'
+import { auralee } from './adapters/auralee'
 import { depict } from './adapters/depict'
 import { generic } from './adapters/generic'
 import { shopify } from './adapters/shopify'
@@ -14,7 +15,7 @@ import { mapLimit } from './http'
 import { refreshRates } from './currency'
 import { detectPromotions } from './promotions'
 
-const ADAPTERS: Adapter[] = [shopify, woocommerce, depict, generic]
+const ADAPTERS: Adapter[] = [auralee, shopify, woocommerce, depict, generic]
 const STORE_CONCURRENCY = 3
 // Listings that aren't things you'd buy on their own: gift cards, shipping
 // add-ons, and lens upgrades that eyewear stores list as separate products.
@@ -92,6 +93,8 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
     const products = fetched.products.filter(
       (raw) =>
         !NOT_A_PRODUCT.test(`${raw.productType} ${raw.title}`) &&
+        // Listings without a single photo are placeholders or spare parts.
+        raw.images.length > 0 &&
         // Children's lines are never collected.
         !raw.kids &&
         !isKids(raw.title, raw.productType, raw.tags.join(' '), urlPath(raw.url))
@@ -211,16 +214,17 @@ function foldRxSizes(sizes: Size[]): Size[] {
 }
 
 function toStored(store: Store, raw: RawProduct, id: string, currency: string, brand: string): Omit<db.StoredProductInput, 'position'> {
+  const description = htmlToText(raw.descriptionHtml)
   const category = classifyCategory(
     raw.productType,
     raw.title,
     raw.tags,
     [urlPath(raw.url), ...(raw.colors ?? []).map((c) => c.name)].join(' '),
     raw.storeCategory ?? null,
-    htmlToText(raw.descriptionHtml)
+    description
   )
   const gender = classifyGender(
-    { productType: raw.productType, title: raw.title, tags: raw.tags, url: raw.url, description: htmlToText(raw.descriptionHtml) },
+    { productType: raw.productType, title: raw.title, tags: raw.tags, url: raw.url, description },
     category,
     raw.collectionGender
   )
@@ -231,7 +235,7 @@ function toStored(store: Store, raw: RawProduct, id: string, currency: string, b
     externalId: raw.externalId,
     title: raw.title,
     brand,
-    description: htmlToText(raw.descriptionHtml),
+    description,
     url: raw.url,
     productType: raw.productType,
     tags: raw.tags,

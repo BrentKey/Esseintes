@@ -1,7 +1,7 @@
 export type Gender = 'men' | 'women' | 'unisex' | 'unknown'
 export type GenderPreference = 'men' | 'women' | 'all'
 export type StoreGender = 'mixed' | 'men' | 'women'
-export type Platform = 'shopify' | 'woocommerce' | 'depict' | 'generic'
+export type Platform = 'shopify' | 'woocommerce' | 'depict' | 'auralee' | 'generic'
 
 export interface Size {
   label: string
@@ -117,6 +117,8 @@ export interface ProductQuery {
   onSale?: boolean
   justReduced?: boolean
   newSince?: string
+  /** What's New: recent arrivals, per the policy in db.ts. */
+  newArrivals?: boolean
   favoritesOnly?: boolean
   /** Only items in stock in the size saved with them (collection) or my sizes. */
   inMySize?: boolean
@@ -127,6 +129,8 @@ export interface ProductQuery {
   sort?: SortKey
   limit?: number
   offset?: number
+  /** Which filter counts to compute; 'none' also skips the total (returned as -1). Default 'all'. */
+  facets?: 'all' | 'categories' | 'none'
 }
 
 export interface Facet {

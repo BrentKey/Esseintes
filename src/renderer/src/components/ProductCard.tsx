@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { Product } from '@shared/types'
 import { useData } from '../data'
 import { api, bestSitewidePromo, discountPercent, isRecent, sized } from '../lib'
@@ -6,14 +6,15 @@ import { useNav } from '../nav'
 import { Heart } from './Icons'
 import { Price } from './Price'
 
-export function ProductCard({
+// Memoized: long grids re-render often (loading more, hover), and each card is cheap to skip.
+export const ProductCard = memo(function ProductCard({
   product,
   onFavorite,
   note,
   showSaved
 }: {
   product: Product
-  onFavorite?: (fav: boolean) => void
+  onFavorite?: (p: Product, fav: boolean) => void
   note?: string
   /** In the collection, show the saved size and whether it's in stock. */
   showSaved?: boolean
@@ -35,7 +36,7 @@ export function ProductCard({
     e.stopPropagation()
     const next = await api.toggleFavorite(product.id)
     setFav(next)
-    onFavorite?.(next)
+    onFavorite?.(product, next)
     bump()
   }
 
@@ -77,7 +78,7 @@ export function ProductCard({
       </div>
     </article>
   )
-}
+})
 
 export function ProductGrid({
   products,
@@ -91,7 +92,7 @@ export function ProductGrid({
   return (
     <div className="grid">
       {products.map((p) => (
-        <ProductCard key={p.id} product={p} onFavorite={(f) => onFavorite?.(p, f)} showSaved={showSaved} />
+        <ProductCard key={p.id} product={p} onFavorite={onFavorite} showSaved={showSaved} />
       ))}
     </div>
   )

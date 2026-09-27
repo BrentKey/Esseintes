@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { Alert, HomeData } from '@shared/types'
 import { ProductCard, ProductGrid } from '../components/ProductCard'
-import { useData } from '../data'
+import { useData, useSync } from '../data'
 import { api, sized, timeAgo } from '../lib'
 import { useNav } from '../nav'
 
 export function Home() {
   const { go } = useNav()
-  const { version, settings, sync } = useData()
+  const { version, settings } = useData()
+  const sync = useSync()
   const [data, setData] = useState<HomeData | null>(null)
 
   useEffect(() => {
@@ -46,7 +47,7 @@ export function Home() {
     <div className="page home">
       <section className="hero">
         <div className="hero-copy">
-          <div className="eyebrow">{data.newSinceLastVisit > 0 ? 'Since your last visit' : 'This week'}</div>
+          <div className="eyebrow">{data.newSinceLastVisit > 0 ? 'Since your last visit' : 'Latest'}</div>
           <h1 className="display">
             {data.newSinceLastVisit > 0 ? `${data.newSinceLastVisit} new arrivals` : 'The latest arrivals'}
           </h1>
@@ -60,7 +61,7 @@ export function Home() {
                 go(
                   data.newSinceLastVisit > 0
                     ? { page: 'shop', title: 'New Since Your Last Visit', query: { newSince: data.previousVisitAt ?? undefined } }
-                    : { page: 'shop', title: "What's New", query: { sort: 'newest', individual: true } }
+                    : { page: 'shop', title: "What's New", query: { sort: 'newest', individual: true, newArrivals: true } }
                 )
               }
             >
@@ -115,7 +116,7 @@ export function Home() {
       )}
 
       <section className="section">
-        <SectionHead title="What’s New" action="Shop all" onAction={() => go({ page: 'shop', title: "What's New", query: { sort: 'newest', individual: true } })} />
+        <SectionHead title="What’s New" action="Shop all" onAction={() => go({ page: 'shop', title: "What's New", query: { sort: 'newest', individual: true, newArrivals: true } })} />
         <ProductGrid products={whatsNew} />
       </section>
 

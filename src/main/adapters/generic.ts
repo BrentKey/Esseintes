@@ -80,6 +80,17 @@ function imageUrls(v: unknown): string[] {
 
 const inStock = (a: unknown) => !a || /InStock|LimitedAvailability|PreOrder|OnlineOnly/i.test(String(a))
 
+function centraProduct($: ReturnType<typeof load>): Json | null {
+  const raw = $('script#__NEXT_DATA__').contents().text()
+  if (!raw.includes('"centra"')) return null
+  try {
+    const page = JSON.parse(raw)?.props?.pageProps
+    return (page?.centra ?? page?.pageProps?.centra)?.product ?? null
+  } catch {
+    return null
+  }
+}
+
 export function parseProduct(url: string, html: string): RawProduct | null {
   const $ = load(html)
   let product: Json | null = null
@@ -130,7 +141,22 @@ export function parseProduct(url: string, html: string): RawProduct | null {
   }
 
   const brand = typeof p.brand === 'string' ? p.brand : (p.brand?.name ?? '')
-  const images = imageUrls(p.image).concat(variants.flatMap((v) => imageUrls(v.image)))
+  let images = imageUrls(p.image).concat(variants.flatMap((v) => imageUrls(v.image)))
+  let available = prices.some((o) => o.available)
+
+  // Centra shops built on Next.js (e.g. Our Legacy) embed the full product record,
+  // with stock per size, which their JSON-LD leaves out.
+  const centra = centraProduct($)
+  if (centra) {
+    sizes.length = 0
+    for (const s of asArray<Json>(centra.items ?? centra.sizes))
+      if (typeof s?.name === 'string') sizes.push({ label: s.name, available: s.stock !== 'no' && s.stock !== false })
+    available = centra.available !== false && (!sizes.length || sizes.some((s) => s.available))
+    const media = asArray<string>(centra.media?.full ?? centra.media?.standard).filter((m) => typeof m === 'string')
+    if (media.length) images = media
+    else if (Array.isArray(centra.media?.full)) images = []
+  }
+
   const category = [p.category, $('meta[property="product:category"]').attr('content')].filter(Boolean).join(' ')
 
   return {
@@ -148,7 +174,7 @@ export function parseProduct(url: string, html: string): RawProduct | null {
     currency: best.currency ?? null,
     sizes,
     colors: byColor.size > 1 ? [...byColor.values()] : [],
-    available: prices.some((o) => o.available),
+    available,
     collectionGender: null
   }
 }

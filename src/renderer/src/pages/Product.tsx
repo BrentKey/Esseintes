@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ModelColourway, Product as P, ProductDetail } from '@shared/types'
 import { External, Heart } from '../components/Icons'
 import { Price } from '../components/Price'
+import { Lightbox } from '../components/Lightbox'
 import { ProductGrid } from '../components/ProductCard'
 import { useData } from '../data'
 import { api, bestSitewidePromo, compareSizes, looksForeign, money, sized, translateUrl } from '../lib'
@@ -16,6 +17,7 @@ export function Product({ id }: { id: string }) {
   const [more, setMore] = useState<P[]>([])
   const [img, setImg] = useState(0)
   const [size, setSize] = useState<string | null>(null)
+  const [zoomed, setZoomed] = useState(false)
 
   useEffect(() => {
     setImg(0)
@@ -27,7 +29,7 @@ export function Product({ id }: { id: string }) {
       // Open on the colour that was clicked (a newly added colour, if that's why it was shown).
       const i = d.model.findIndex((c) => c.productId === d.id && (!d.newColor || c.name === d.newColor))
       setSel(Math.max(0, i))
-      api.queryProducts({ brands: [d.brand], limit: 9 }).then((r) => setMore(r.items.filter((x) => x.id !== d.id).slice(0, 8)))
+      api.queryProducts({ brands: [d.brand], limit: 9, facets: 'none' }).then((r) => setMore(r.items.filter((x) => x.id !== d.id).slice(0, 8)))
     })
   }, [id])
 
@@ -79,8 +81,15 @@ export function Product({ id }: { id: string }) {
               </button>
             ))}
           </div>
-          <div className="gallery-main">{gallery[img] && <img src={sized(gallery[img], 1400)} alt={p.title} />}</div>
+          <div className="gallery-main">
+            {gallery[img] && (
+              <button onClick={() => setZoomed(true)} aria-label="Enlarge photo">
+                <img src={sized(gallery[img], 1400)} alt={p.title} />
+              </button>
+            )}
+          </div>
         </div>
+        {zoomed && <Lightbox images={gallery.slice(0, 10)} start={img} alt={p.title} onClose={() => setZoomed(false)} />}
 
         <div className="product-info">
           <button className="product-brand" onClick={() => go({ page: 'shop', title: p.brand, query: { brands: [p.brand] } })}>

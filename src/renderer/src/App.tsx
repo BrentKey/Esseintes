@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Promotion, Settings, SyncStatus } from '@shared/types'
 import { Header, PromoBar } from './components/Header'
-import { DataContext } from './data'
+import { DataContext, SyncContext } from './data'
 import { api } from './lib'
 import { NavContext, type Route } from './nav'
 import { Home } from './pages/Home'
@@ -117,11 +117,16 @@ export function App() {
     return () => clearTimeout(t)
   }, [top.key])
 
-  if (!settings) return null
-  const data = { settings, updateSettings, promotions, sync, unreadAlerts, version, bump }
+  const data = useMemo(
+    () => (settings ? { settings, updateSettings, promotions, unreadAlerts, version, bump } : null),
+    [settings, updateSettings, promotions, unreadAlerts, version, bump]
+  )
+
+  if (!settings || !data) return null
 
   return (
     <DataContext.Provider value={data}>
+      <SyncContext.Provider value={sync}>
       <NavContext.Provider value={nav}>
         {!settings.onboarded ? (
           <Onboarding />
@@ -142,6 +147,7 @@ export function App() {
           </div>
         )}
       </NavContext.Provider>
+      </SyncContext.Provider>
     </DataContext.Provider>
   )
 }

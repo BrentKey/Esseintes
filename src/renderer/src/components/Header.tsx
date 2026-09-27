@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Facet } from '@shared/types'
 import { DEPARTMENTS } from '@shared/categories'
-import { useData } from '../data'
+import { useData, useSync } from '../data'
 import { api, timeAgo } from '../lib'
 import { useNav } from '../nav'
 import tortoise from '../assets/tortoise.svg'
@@ -12,13 +12,14 @@ const NAV_DEPARTMENTS = ['Clothing', 'Shoes', 'Bags', 'Accessories', 'Lifestyle'
 
 export function Header() {
   const { go, back, canGoBack, route } = useNav()
-  const { sync, version, unreadAlerts, bump } = useData()
+  const { version, unreadAlerts, bump } = useData()
+  const sync = useSync()
   const [search, setSearch] = useState('')
   const [counts, setCounts] = useState<Map<string, number>>(new Map())
   const [menu, setMenu] = useState<string | null>(null)
 
   useEffect(() => {
-    api.queryProducts({ limit: 0 }).then((r) => setCounts(new Map(r.facets.categories.map((c: Facet) => [c.value, c.count]))))
+    api.queryProducts({ limit: 0, facets: 'categories' }).then((r) => setCounts(new Map(r.facets.categories.map((c: Facet) => [c.value, c.count]))))
   }, [version])
 
   const shop = (title: string, query = {}, subtitle?: string) => {
@@ -94,7 +95,7 @@ export function Header() {
       </div>
 
       <nav className="header-nav" onMouseLeave={() => setMenu(null)}>
-        <button onMouseEnter={() => setMenu(null)} onClick={() => shop("What's New", { sort: 'newest', individual: true })}>
+        <button onMouseEnter={() => setMenu(null)} onClick={() => shop("What's New", { sort: 'newest', individual: true, newArrivals: true })}>
           What’s New
         </button>
         {departments.map((d) => (

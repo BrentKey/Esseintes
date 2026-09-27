@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import type {
   Alert,
   Colorway,
@@ -111,6 +111,13 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS detail_cache (
+  store TEXT NOT NULL,
+  item TEXT NOT NULL,
+  data TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (store, item)
+);
 `
 
 const DEFAULT_SETTINGS: Settings = {
@@ -131,10 +138,18 @@ const DEFAULT_SETTINGS: Settings = {
 const now = () => new Date().toISOString()
 const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString()
 export const REDUCED_WINDOW_DAYS = 14
+// What's New holds everything that arrived in the last NEW_DAYS (new colours
+// included). A newly added store's first import isn't really new to the store,
+// so it only counts for NEW_IMPORT_DAYS. When nothing qualifies, the most
+// recent NEW_FALLBACK items are shown instead.
+const NEW_DAYS = 10
+const NEW_IMPORT_DAYS = 1
+const NEW_FALLBACK = 70
 
 export function openDb(file: string) {
   db = new DatabaseSync(file)
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
+  statements.clear()
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA temp_store = MEMORY;')
   db.exec(SCHEMA)
   // Columns added after the first release; CREATE TABLE IF NOT EXISTS won't add them to existing databases.
   ensureColumn('products', 'position', 'INTEGER NOT NULL DEFAULT 0')
@@ -165,9 +180,22 @@ export function openDb(file: string) {
   db.function('to_display', { deterministic: false }, (amount: unknown, currency: unknown) =>
     convert(Number(amount), String(currency)) ?? Number(amount)
   )
-  db.function('my_size', { deterministic: false }, (label: unknown) =>
-    sizeMatches(String(label), cachedSettings().mySizes) ? 1 : 0
-  )
+  // Called for every size row a query checks; there are only ~1k distinct labels,
+  // so remember each answer until the saved sizes change.
+  let matchesFor = ''
+  const matches = new Map<string, number>()
+  db.function('my_size', { deterministic: false }, (label: unknown) => {
+    const mine = cachedSettings().mySizes
+    const key = mine.join('\u0000')
+    if (key !== matchesFor) {
+      matches.clear()
+      matchesFor = key
+    }
+    const l = String(label)
+    let m = matches.get(l)
+    if (m === undefined) matches.set(l, (m = sizeMatches(l, mine) ? 1 : 0))
+    return m
+  })
 }
 
 /** Runs a one-off data fix the first time the app sees it. */
@@ -183,6 +211,14 @@ function ensureColumn(table: string, column: string, definition: string) {
   if (!exists) return
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+}
+
+// Prepared statements for the hot sync path, compiled once per SQL string.
+const statements = new Map<string, StatementSync>()
+function stmt(sql: string): StatementSync {
+  let st = statements.get(sql)
+  if (!st) statements.set(sql, (st = db.prepare(sql)))
+  return st
 }
 
 export function transaction<T>(fn: () => T): T {
@@ -315,7 +351,7 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
   let priceDroppedAt: string | null = null
   let previousPrice: number | null = null
   if (!existing) {
-    db.prepare(
+    stmt(
       `INSERT INTO products (id, store_id, external_id, title, brand, description, url, product_type, tags, category, gender,
         images, price, compare_at_price, currency, sizes, available, first_seen_at, initial, last_seen_at, updated_at, position, colors,
         model_key, color_label)
@@ -341,7 +377,7 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
     // A colour added to a listing we already had is a new arrival in its own right.
     const known = new Set((JSON.parse(existing.colors || '[]') as Colorway[]).map((c) => c.name))
     const newColor = known.size ? (p.colors.find((c) => !known.has(c.name))?.name ?? null) : null
-    db.prepare(
+    stmt(
       `UPDATE products SET title = ?, brand = ?, description = ?, url = ?, product_type = ?, tags = ?, category = ?, gender = ?,
         images = ?, price = ?, compare_at_price = ?, currency = ?, sizes = ?, available = ?, last_seen_at = ?, removed_at = NULL, position = ?,
         updated_at = CASE WHEN ? THEN ? ELSE updated_at END,
@@ -358,9 +394,13 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
       newColor ? ts : null, newColor, p.id
     )
   }
-  db.prepare('DELETE FROM product_sizes WHERE product_id = ?').run(p.id)
-  const ins = db.prepare('INSERT INTO product_sizes (product_id, label, norm, available) VALUES (?, ?, ?, ?)')
-  for (const s of p.sizes) ins.run(p.id, s.label, normalizeSize(s.label), s.available ? 1 : 0)
+  // Size rows only need rewriting when the sizes changed. (If normalizeSize ever
+  // changes, add a runOnce migration that recomputes product_sizes.norm.)
+  if (!existing || existing.sizes !== sizesJson) {
+    stmt('DELETE FROM product_sizes WHERE product_id = ?').run(p.id)
+    const ins = stmt('INSERT INTO product_sizes (product_id, label, norm, available) VALUES (?, ?, ?, ?)')
+    for (const s of p.sizes) ins.run(p.id, s.label, normalizeSize(s.label), s.available ? 1 : 0)
+  }
   return { priceDropped: priceDroppedAt !== null }
 }
 
@@ -375,7 +415,7 @@ function changedMeaningfully(before: number | null, after: number | null): boole
 }
 
 function recordPrice(id: string, price: number, compare: number | null, ts: string) {
-  db.prepare('INSERT INTO price_history (product_id, price, compare_at_price, recorded_at) VALUES (?, ?, ?, ?)').run(id, price, compare, ts)
+  stmt('INSERT INTO price_history (product_id, price, compare_at_price, recorded_at) VALUES (?, ?, ?, ?)').run(id, price, compare, ts)
 }
 
 export function markRemoved(ids: string[]) {
@@ -497,7 +537,7 @@ export function formatPrice(amount: number, currency: string): string {
 
 // ---------- products (read side) ----------
 
-const recent = (iso: string | null) => !!iso && Date.now() - new Date(iso).getTime() < 7 * 86_400_000
+const recent = (iso: string | null, days: number) => !!iso && Date.now() - new Date(iso).getTime() < days * 86_400_000
 
 function rowToProduct(r: any): Product {
   const display = cachedSettings().currency
@@ -523,9 +563,9 @@ function rowToProduct(r: any): Product {
     sizes: JSON.parse(r.sizes),
     available: !!r.available,
     firstSeenAt: r.first_seen_at,
-    // Items loaded when a store is first added aren't "new" arrivals.
-    isNew: (!r.initial && recent(r.first_seen_at)) || recent(r.new_color_at),
-    newColor: recent(r.new_color_at) ? r.new_color_name : null,
+    // Items loaded when a store is first added are only "new" briefly.
+    isNew: recent(r.first_seen_at, r.initial ? NEW_IMPORT_DAYS : NEW_DAYS) || recent(r.new_color_at, NEW_DAYS),
+    newColor: recent(r.new_color_at, NEW_DAYS) ? r.new_color_name : null,
     colors: JSON.parse(r.colors ?? '[]'),
     colorLabel: r.color_label ?? null,
     colourCount: Number(r.model_colors ?? Math.max(1, JSON.parse(r.colors ?? '[]').length)),
@@ -592,6 +632,7 @@ function buildWhere(q: ProductQuery, settings: Settings, skip?: FacetKey): Where
   if (q.onSale) add('p.compare_at_price IS NOT NULL')
   if (q.justReduced) add('p.price_dropped_at > ?', daysAgo(REDUCED_WINDOW_DAYS))
   if (q.newSince) add('p.first_seen_at > ? AND p.initial = 0', q.newSince)
+  if (q.newArrivals) add(...newArrivals(settings))
   if (q.favoritesOnly) add('f.product_id IS NOT NULL')
   // In stock in the size saved with the item (or, with none saved, any of my sizes; one-size items count).
   if (q.inMySize)
@@ -601,6 +642,18 @@ function buildWhere(q: ProductQuery, settings: Settings, skip?: FacetKey): Where
   if (q.minPrice != null) add('to_display(p.price, p.currency) >= ?', q.minPrice)
   if (q.maxPrice != null) add('to_display(p.price, p.currency) <= ?', q.maxPrice)
   return w
+}
+
+const FRESH = '(p.new_color_at > ? OR p.first_seen_at > CASE WHEN p.initial = 1 THEN ? ELSE ? END)'
+
+/** The SQL condition (and its parameters) selecting What's New under the user's settings. */
+function newArrivals(settings: Settings): [string, ...any[]] {
+  const fresh = [daysAgo(NEW_DAYS), daysAgo(NEW_IMPORT_DAYS), daysAgo(NEW_DAYS)]
+  const base = baseWhere(settings)
+  const from = `FROM products p JOIN stores s ON s.id = p.store_id LEFT JOIN favorites f ON f.product_id = p.id WHERE ${base.sql.join(' AND ')}`
+  const any = db.prepare(`SELECT 1 ${from} AND ${FRESH} LIMIT 1`).get(...base.params, ...fresh)
+  if (any) return [FRESH, ...fresh]
+  return [`p.id IN (SELECT p.id ${from} ORDER BY ${NEWEST} LIMIT ${NEW_FALLBACK})`, ...base.params]
 }
 
 // A new colour of an existing listing counts as new, from the moment it appeared.
@@ -655,31 +708,37 @@ export function queryProducts(q: ProductQuery): ProductPage {
   const from = `FROM products p JOIN stores s ON s.id = p.store_id LEFT JOIN favorites f ON f.product_id = p.id WHERE ${where}`
   let total: number
   let rows: any[]
+  const want = q.facets ?? 'all'
   if (grouped(q)) {
-    total = Number((db.prepare(`SELECT COUNT(DISTINCT ${MODEL}) AS n ${from}`).get(...w.params) as any).n)
+    total = want === 'none' ? -1 : Number((db.prepare(`SELECT COUNT(DISTINCT ${MODEL}) AS n ${from}`).get(...w.params) as any).n)
     // The best-matching listing represents each model; colourways are counted across all of them.
+    // Ranking runs on ids only; full rows are loaded just for the page returned.
     rows = db
       .prepare(
         `WITH m AS (
-           SELECT p.*, s.name AS store_name, (f.product_id IS NOT NULL) AS favorite, f.size AS favorite_size,
+           SELECT p.id,
              ROW_NUMBER() OVER (PARTITION BY ${MODEL} ORDER BY ${order}) AS rn,
+             ROW_NUMBER() OVER (ORDER BY ${order}) AS ord,
              SUM(MAX(1, json_array_length(p.colors))) OVER (PARTITION BY ${MODEL}) AS model_colors
-           ${from})
-         SELECT * FROM m p WHERE rn = 1 ORDER BY ${order} LIMIT ? OFFSET ?`
+           ${from}),
+         page AS (SELECT id, ord, model_colors FROM m WHERE rn = 1 ORDER BY ord LIMIT ? OFFSET ?)
+         SELECT p.*, s.name AS store_name, (f.product_id IS NOT NULL) AS favorite, f.size AS favorite_size, page.model_colors
+         FROM page JOIN products p ON p.id = page.id JOIN stores s ON s.id = p.store_id LEFT JOIN favorites f ON f.product_id = p.id
+         ORDER BY page.ord`
       )
       .all(...w.params, q.limit ?? 60, q.offset ?? 0) as any[]
   } else {
-    total = Number((db.prepare(`SELECT COUNT(*) AS n ${from}`).get(...w.params) as any).n)
+    total = want === 'none' ? -1 : Number((db.prepare(`SELECT COUNT(*) AS n ${from}`).get(...w.params) as any).n)
     rows = db.prepare(`${productSelect} WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...w.params, q.limit ?? 60, q.offset ?? 0) as any[]
   }
   return {
     items: rows.map(rowToProduct),
     total,
     facets: {
-      categories: facet(q, settings, 'category'),
-      stores: facet(q, settings, 'store'),
-      brands: facet(q, settings, 'brand'),
-      sizes: facet(q, settings, 'size')
+      categories: want === 'none' ? [] : facet(q, settings, 'category'),
+      stores: want === 'all' ? facet(q, settings, 'store') : [],
+      brands: want === 'all' ? facet(q, settings, 'brand') : [],
+      sizes: want === 'all' ? facet(q, settings, 'size') : []
     }
   }
 }
@@ -801,7 +860,10 @@ export function getHome(previousVisit: string | null): HomeData {
     .all(...base.params) as any[]).map((r) => ({ name: r.name, count: Number(r.count), image: r.image }))
 
   return {
-    newIn: list('', NEWEST, 24),
+    newIn: (() => {
+      const [sql, ...params] = newArrivals(settings)
+      return list(`AND ${sql}`, NEWEST, 24, ...params)
+    })(),
     previousVisitAt: previousVisit,
     alerts: listAlerts(12),
     newSinceLastVisit: previousVisit ? count('AND p.first_seen_at > ? AND p.initial = 0', previousVisit) : 0,
@@ -811,4 +873,14 @@ export function getHome(previousVisit: string | null): HomeData {
     categories,
     stores: listStores().filter((s) => s.enabled)
   }
+}
+
+/** Product details a slow-reading adapter fetched earlier, keyed by item, with when each was read. */
+export function detailCache(store: string): Map<string, { data: unknown; fetchedAt: string }> {
+  const rows = db.prepare('SELECT item, data, fetched_at FROM detail_cache WHERE store = ?').all(store) as any[]
+  return new Map(rows.map((r) => [r.item, { data: JSON.parse(r.data), fetchedAt: r.fetched_at }]))
+}
+
+export function saveDetail(store: string, item: string, data: unknown) {
+  db.prepare('INSERT OR REPLACE INTO detail_cache (store, item, data, fetched_at) VALUES (?, ?, ?, ?)').run(store, item, JSON.stringify(data), now())
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Facet, Product, ProductPage, ProductQuery, SortKey } from '@shared/types'
 import { ProductGrid } from '../components/ProductCard'
 import { useData } from '../data'
@@ -31,6 +31,14 @@ export function Shop({ title, subtitle, query }: { title: string; subtitle?: str
   })
   const [page, setPage] = useState<ProductPage | null>(null)
   const [items, setItems] = useState<Product[]>([])
+  const favoritesOnly = !!query.favoritesOnly
+  // Stable, so memoized cards don't re-render when this page does.
+  const onFavorite = useCallback(
+    (p: Product, fav: boolean) => {
+      if (favoritesOnly && !fav) setItems((xs) => xs.filter((x) => x.id !== p.id))
+    },
+    [favoritesOnly]
+  )
   const [loadingMore, setLoadingMore] = useState(false)
   const sentinel = useRef<HTMLDivElement>(null)
   const loaded = useRef({ key: '', count: 0 })
@@ -72,7 +80,7 @@ export function Shop({ title, subtitle, query }: { title: string; subtitle?: str
     const io = new IntersectionObserver(async ([entry]) => {
       if (!entry.isIntersecting || loadingMore) return
       setLoadingMore(true)
-      const r = await api.queryProducts({ ...effective, limit: PAGE, offset: items.length })
+      const r = await api.queryProducts({ ...effective, limit: PAGE, offset: items.length, facets: 'none' })
       setItems((prev) => {
         const next = [...prev, ...r.items]
         loaded.current.count = next.length
@@ -189,9 +197,7 @@ export function Shop({ title, subtitle, query }: { title: string; subtitle?: str
             <ProductGrid
               products={items}
               showSaved={query.favoritesOnly}
-              onFavorite={(p, fav) => {
-                if (query.favoritesOnly && !fav) setItems((xs) => xs.filter((x) => x.id !== p.id))
-              }}
+              onFavorite={onFavorite}
             />
           )}
           <div ref={sentinel} className="sentinel" />

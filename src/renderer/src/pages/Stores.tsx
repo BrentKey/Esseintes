@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import type { Store } from '@shared/types'
-import { useData } from '../data'
+import { useData, useSync } from '../data'
 import { api, timeAgo } from '../lib'
 import { useNav } from '../nav'
 
-const PLATFORM_LABEL: Record<string, string> = { shopify: 'Shopify', woocommerce: 'WooCommerce', depict: 'Centra (Depict)', generic: 'Generic (sitemap)' }
+const PLATFORM_LABEL: Record<string, string> = { shopify: 'Shopify', woocommerce: 'WooCommerce', depict: 'Centra (Depict)', auralee: 'Auralee (gentle)', generic: 'Generic (sitemap)' }
 
 export function Stores() {
   const { go } = useNav()
-  const { version, bump, sync, promotions } = useData()
+  const { version, bump, promotions } = useData()
+  const sync = useSync()
   const [stores, setStores] = useState<Store[]>([])
   const [importMsg, setImportMsg] = useState<string | null>(null)
 
