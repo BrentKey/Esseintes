@@ -1,6 +1,7 @@
 import type { Colorway, Gender, Size } from '@shared/types'
 import { load } from 'cheerio'
 import { collectionCategory, collectionGender, isKids, isSizeOption } from '../classify'
+import * as db from '../db'
 import { fetchJson, fetchText, HttpError, mapLimit, sleep, tryFetchJson } from '../http'
 import type { Adapter, FetchResult, RawProduct } from './types'
 
@@ -102,6 +103,27 @@ interface ShopifyCollection {
 const MAX_COLLECTIONS_PER_GENDER = 4
 const COLLECTION_CONCURRENCY = 4
 const MAX_CATEGORY_COLLECTIONS = 24
+// A collection's membership is re-read when its product count changes, or after this long.
+const MEMBERSHIP_TTL_MS = 24 * 3_600_000
+
+/**
+ * Product ids in a collection, reusing the copy saved by an earlier sync while
+ * the collection's product count is unchanged and the copy is under a day old.
+ */
+async function collectionIds(base: string, handle: string, count: number | null): Promise<number[]> {
+  const store = `${new URL(base).host}#collections`
+  const saved = db.detailCache(store).get(handle) as { data: { count: number | null; ids: number[] }; fetchedAt: string } | undefined
+  if (saved && saved.data.count === count && Date.now() - new Date(saved.fetchedAt).getTime() < MEMBERSHIP_TTL_MS) return saved.data.ids
+  try {
+    const ids = (await fetchCollection(base, `/collections/${handle}`)).products.map((p) => p.id)
+    db.saveDetail(store, handle, { count, ids })
+    return ids
+  } catch (e) {
+    // A stale copy beats no labels at all.
+    if (saved) return saved.data.ids
+    throw e
+  }
+}
 
 /**
  * Labels products using the store's own men's/women's collections. The
@@ -153,14 +175,15 @@ async function genderMembership(
   const kids = new Set<number>()
   // For each product, the category of the smallest (most specific) collection it's in.
   const categories = new Map<number, { cat: string; size: number }>()
+  const counts = new Map(collections.map((c) => [c.handle, c.products_count ?? null]))
   await mapLimit(jobs, COLLECTION_CONCURRENCY, async ({ handle, label, cat, size }) => {
     try {
-      for (const p of (await fetchCollection(base, `/collections/${handle}`)).products) {
-        if (label === 'kids') kids.add(p.id)
+      for (const id of await collectionIds(base, handle, counts.get(handle) ?? null)) {
+        if (label === 'kids') kids.add(id)
         else if (label === 'category') {
-          const prev = categories.get(p.id)
-          if (!prev || size! < prev.size) categories.set(p.id, { cat: cat!, size: size! })
-        } else (found.get(p.id) ?? found.set(p.id, new Set()).get(p.id)!).add(label)
+          const prev = categories.get(id)
+          if (!prev || size! < prev.size) categories.set(id, { cat: cat!, size: size! })
+        } else (found.get(id) ?? found.set(id, new Set()).get(id)!).add(label)
       }
     } catch {
       /* membership is a hint only */

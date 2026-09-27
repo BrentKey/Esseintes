@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Facet, Product, ProductPage, ProductQuery, SortKey } from '@shared/types'
 import { ProductGrid } from '../components/ProductCard'
-import { useData } from '../data'
+import { useData, useLiveVersion } from '../data'
 import { api, compareSizes } from '../lib'
 
 const PAGE = 60
@@ -19,7 +19,8 @@ interface Filters {
 }
 
 export function Shop({ title, subtitle, query }: { title: string; subtitle?: string; query: ProductQuery }) {
-  const { version, settings } = useData()
+  const { settings } = useData()
+  const version = useLiveVersion()
   const [filters, setFilters] = useState<Filters>({
     categories: [],
     storeIds: [],

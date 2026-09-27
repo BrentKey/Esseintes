@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { Alert, HomeData } from '@shared/types'
 import { ProductCard, ProductGrid } from '../components/ProductCard'
-import { useData, useSync } from '../data'
+import { useData, useLiveVersion, useSync } from '../data'
 import { api, sized, timeAgo } from '../lib'
 import { useNav } from '../nav'
 
 export function Home() {
   const { go } = useNav()
-  const { version, settings } = useData()
+  const { settings } = useData()
+  const version = useLiveVersion()
   const sync = useSync()
   const [data, setData] = useState<HomeData | null>(null)
 

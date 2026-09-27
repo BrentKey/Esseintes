@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Promotion, Settings, SyncStatus } from '@shared/types'
 import { Header, PromoBar } from './components/Header'
-import { DataContext, SyncContext } from './data'
+import { ActiveContext, DataContext, SyncContext } from './data'
 import { api } from './lib'
 import { NavContext, type Route } from './nav'
 import { Home } from './pages/Home'
@@ -21,6 +21,7 @@ interface Entry {
 // Recent pages stay mounted (just hidden), so Back returns to exactly where you
 // were: loaded items, filters and scroll position intact.
 const KEEP_ALIVE = 6
+const REFRESH_MS = 10_000
 
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -38,13 +39,28 @@ export function App() {
   useEffect(() => {
     api.getSettings().then(setSettings)
     api.getSyncStatus().then(setSync)
+    // Refresh views as stores finish so items appear progressively, but at most
+    // every REFRESH_MS while a sync runs (each refresh re-queries every open view),
+    // and always once when it ends.
     let completed = -1
-    return api.onSyncStatus((s) => {
+    let last = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const refresh = () => {
+      clearTimeout(timer)
+      timer = undefined
+      last = Date.now()
+      setVersion((v) => v + 1)
+    }
+    const off = api.onSyncStatus((s) => {
       setSync(s)
-      // Refresh views as each store finishes so items appear progressively.
-      if (s.completed !== completed || !s.running) setVersion((v) => v + 1)
+      if (!s.running) refresh()
+      else if (s.completed !== completed && !timer) timer = setTimeout(refresh, Math.max(0, last + REFRESH_MS - Date.now()))
       completed = s.completed
     })
+    return () => {
+      clearTimeout(timer)
+      off()
+    }
   }, [])
 
   useEffect(() => {
@@ -137,7 +153,9 @@ export function App() {
             <main ref={main} className="main">
               {stack.slice(-KEEP_ALIVE).map((e) => (
                 <div key={e.key} hidden={e.key !== top.key}>
-                  <View route={e.route} />
+                  <ActiveContext.Provider value={e.key === top.key}>
+                    <View route={e.route} />
+                  </ActiveContext.Provider>
                 </div>
               ))}
               <footer className="footer muted small">

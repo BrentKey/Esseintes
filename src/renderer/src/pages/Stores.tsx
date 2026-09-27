@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Store } from '@shared/types'
-import { useData, useSync } from '../data'
+import { useData, useLiveVersion, useSync } from '../data'
 import { api, timeAgo } from '../lib'
 import { useNav } from '../nav'
 
@@ -8,7 +8,8 @@ const PLATFORM_LABEL: Record<string, string> = { shopify: 'Shopify', woocommerce
 
 export function Stores() {
   const { go } = useNav()
-  const { version, bump, promotions } = useData()
+  const { bump, promotions } = useData()
+  const version = useLiveVersion()
   const sync = useSync()
   const [stores, setStores] = useState<Store[]>([])
   const [importMsg, setImportMsg] = useState<string | null>(null)

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { Facet, GenderPreference, Settings as S } from '@shared/types'
-import { useData } from '../data'
+import { useData, useLiveVersion } from '../data'
 import { api } from '../lib'
 
 export function Settings() {
-  const { settings, updateSettings, version } = useData()
+  const { settings, updateSettings } = useData()
+  const version = useLiveVersion()
   const [facets, setFacets] = useState<{ brands: Facet[]; categories: Facet[] }>({ brands: [], categories: [] })
   const [currencies, setCurrencies] = useState<string[]>([])
   useEffect(() => {
