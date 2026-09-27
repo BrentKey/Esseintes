@@ -256,13 +256,30 @@ function toStored(store: Store, raw: RawProduct, id: string, currency: string, b
 // Requests made while a sync is running are queued; null means "all stores".
 let queued: Set<number> | null | undefined
 
-export async function runSync(storeId?: number): Promise<void> {
+/**
+ * At launch, reads only stores not updated within the refresh interval (a store
+ * whose last read failed counts as stale). With automatic refresh off, reads all.
+ */
+export async function runStaleSync(): Promise<void> {
+  const hours = db.getSettings().refreshHours
+  const stores = db.listStores().filter((s) => s.enabled)
+  const cutoff = Date.now() - hours * 3_600_000
+  const stale = stores.filter((s) => hours <= 0 || !s.lastSyncedAt || new Date(s.lastSyncedAt).getTime() < cutoff)
+  if (stale.length === stores.length) return runSync()
+  // Show when the stores were last read, even though nothing is read now.
+  const latest = stores.map((s) => s.lastSyncedAt).filter((t): t is string => !!t).sort().pop() ?? null
+  emit({ lastRunAt: latest })
+  if (stale.length) await runSync(undefined, new Set(stale.map((s) => s.id)))
+}
+
+/** Reads one store, the given set of stores, or (with neither) every enabled store. */
+export async function runSync(storeId?: number, only?: Set<number>): Promise<void> {
   if (status.running) {
     if (storeId == null) queued = null
     else if (queued !== null) (queued ??= new Set()).add(storeId)
     return
   }
-  const stores = db.listStores().filter((s) => s.enabled && (storeId == null || s.id === storeId))
+  const stores = db.listStores().filter((s) => s.enabled && (storeId == null || s.id === storeId) && (!only || only.has(s.id)))
   if (!stores.length) return
   emit({ running: true, completed: 0, total: stores.length, currentStore: stores[0].name, results: [] })
   await refreshRates()

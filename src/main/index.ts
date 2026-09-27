@@ -262,7 +262,7 @@ app.whenReady().then(async () => {
 
   // ESSEINTES_NO_AUTOSYNC=1 opens without re-reading every store (for quick testing).
   if (!process.env.ESSEINTES_NO_AUTOSYNC) {
-    void sync.runSync()
+    void sync.runStaleSync()
     scheduleRefresh()
   }
 
