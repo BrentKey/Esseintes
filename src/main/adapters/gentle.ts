@@ -10,7 +10,7 @@ import type { RawProduct } from './types'
 // sizes and stock, are read slowly and cached: new items first, then the ones
 // checked longest ago, a limited number per sync.
 const DELAY_MS = 3000
-const MAX_DETAILS_PER_SYNC = 40
+export const MAX_DETAILS_PER_SYNC = 40
 
 /** Sizes, colours and stock read from a product page. */
 export interface ItemDetail {
@@ -44,21 +44,22 @@ export function wanted(gender: Gender | null): boolean {
 /**
  * Reads a page for each item slowly and remembers the result: items never read
  * come first, then those read longest ago (only once older than `maxAgeDays`),
- * at most MAX_DETAILS_PER_SYNC per sync. Stops as soon as the store pushes back.
+ * at most `limit` (default MAX_DETAILS_PER_SYNC) per sync. Stops as soon as the store pushes back.
  * Returns what's known for every item, fresh or remembered.
  */
 export async function readSlowly<T>(
   store: string,
   ids: string[],
   read: (id: string) => Promise<T | null>,
-  maxAgeDays = 0
+  maxAgeDays = 0,
+  limit = MAX_DETAILS_PER_SYNC
 ): Promise<Map<string, T>> {
   const cache = db.detailCache(store)
   const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString()
   const due = ids
     .filter((id) => (cache.get(id)?.fetchedAt ?? '') <= cutoff)
     .sort((a, b) => (cache.get(a)?.fetchedAt ?? '').localeCompare(cache.get(b)?.fetchedAt ?? ''))
-  for (const id of due.slice(0, MAX_DETAILS_PER_SYNC)) {
+  for (const id of due.slice(0, Math.max(0, limit))) {
     try {
       const data = await read(id)
       if (data) {

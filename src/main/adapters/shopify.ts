@@ -3,7 +3,7 @@ import { load } from 'cheerio'
 import { collectionCategory, collectionGender, isKids, isSizeOption } from '../classify'
 import * as db from '../db'
 import { fetchJson, fetchText, HttpError, mapLimit, sleep, tryFetchJson } from '../http'
-import { pacer, readSlowly } from './gentle'
+import { MAX_DETAILS_PER_SYNC, pacer, readSlowly } from './gentle'
 import type { Adapter, FetchResult, RawProduct } from './types'
 
 interface ShopifyVariant {
@@ -225,7 +225,10 @@ const COLOUR_OPTION = /\b(colou?rs?|colou?rways?|couleurs?|coloris|colori|colore
 /** Words of a name or file name, space-padded for whole-word matching: "SIRA_E-1-side-1" → " sira e 1 side 1 ". */
 const words = (s: string) => ` ${s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `
 
-/** A photo's file name without extension, Shopify's upload suffix or size, so copies of one photo compare equal. */
+/**
+ * A photo's file name without extension, Shopify's upload suffix or size, so copies
+ * of one photo compare equal (see photoKey for comparing).
+ */
 function photoBase(src: string): string {
   return (src.split('?')[0].split('/').pop() ?? '')
     .toLowerCase()
@@ -236,6 +239,9 @@ function photoBase(src: string): string {
     .replace(/^[0-9a-f]{12}--/, '')
     .replace(/-[0-9a-f]{6}$/, '')
 }
+
+/** Compares photos by name alone: "SIRAAR-1-top-1.jpg" and "SIRA_AR-1-top-1.png" are one photo. */
+const photoKey = (src: string) => photoBase(src).replace(/[^a-z0-9]/g, '')
 
 /**
  * The parts of variant SKUs that identify a colour ("M3141.SG.BG.50" → "bg"):
@@ -295,11 +301,11 @@ function assignPhotos(
   const tagged = new Map<string, string>() // photo base → colour, from the store's own links
   for (const im of p.images ?? []) {
     const colour = im.variant_ids?.map((id) => colourOfVariant.get(id)).find(Boolean)
-    if (colour) tagged.set(photoBase(im.src), colour)
+    if (colour) tagged.set(photoKey(im.src), colour)
   }
   const owners = (p.images ?? []).map((im) => {
-    const base = photoBase(im.src)
-    return { src: im.src, owner: tagged.get(base) ?? null, named: tagged.has(base) ? null : byFileName(im.src) }
+    const key = photoKey(im.src)
+    return { src: im.src, owner: tagged.get(key) ?? null, named: tagged.has(key) ? null : byFileName(im.src) }
   })
   const namesFiles = owners.some((o) => o.named)
   let current: string | null = null
@@ -312,21 +318,25 @@ function assignPhotos(
 
   // Photos only shown on the product page: kept when named after this product and one colour.
   const handleWords = words(p.handle).trim().split(' ').filter((w) => w.length >= 3)
-  const known = new Set((p.images ?? []).map((im) => photoBase(im.src)))
+  const known = new Set((p.images ?? []).map((im) => photoKey(im.src)))
   for (const src of pagePhotos) {
-    const base = photoBase(src)
-    if (known.has(base) || !handleWords.some((h) => words(base).includes(` ${h} `))) continue
+    const key = photoKey(src)
+    if (known.has(key) || !handleWords.some((h) => words(photoBase(src)).includes(` ${h} `))) continue
     const owner = byFileName(src)
     if (!owner) continue
-    known.add(base)
+    known.add(key)
     byName.get(owner)?.images!.push(src)
   }
 
   // Lead each colour with the photo the store linked to it; one copy of each photo.
   for (const c of byName.values()) {
     const seen = new Set<string>()
-    c.images = (c.image ? [c.image, ...c.images!] : c.images!).filter((src) => !seen.has(photoBase(src)) && !!seen.add(photoBase(src)))
+    c.images = (c.image ? [c.image, ...c.images!] : c.images!).filter((src) => !seen.has(photoKey(src)) && !!seen.add(photoKey(src)))
   }
+  // Best-photographed colours first, so a product opens on one with several photos.
+  const ordered = [...byName.entries()].sort(([, a], [, b]) => b.images!.length - a.images!.length)
+  byName.clear()
+  for (const [name, c] of ordered) byName.set(name, c)
 }
 
 /** Product photos in a product page's HTML (Shopify CDN files and theme assets), full size. */
@@ -336,8 +346,8 @@ export function pagePhotos(html: string): string[] {
   const text = html.replace(/\\\//g, '/')
   for (const m of text.matchAll(/(?:https?:)?\/\/[^"'\s()]+?\/(?:cdn\/shop\/files|s\/files\/[\d/]+\/(?:files|t\/\d+\/assets))\/[^"'\s?()]+?\.(?:jpe?g|png|webp)/gi)) {
     const url = (m[0].startsWith('//') ? `https:${m[0]}` : m[0]).replace(/_(\d+x\d*|grande|large|medium|small|compact|master)(\.\w+)$/, '$2')
-    const base = photoBase(url)
-    if (!found.has(base)) found.set(base, url)
+    const key = photoKey(url)
+    if (!found.has(key)) found.set(key, url)
   }
   return [...found.values()]
 }
@@ -470,15 +480,39 @@ export const shopify: Adapter = {
     const multi = raws.filter((r) => r.colors.length > 1)
     if (multi.length >= 3 && multi.filter(thin).length >= multi.length / 2) {
       const get = pacer()
+      const store = `${new URL(base).host}#pagephotos`
+      let reads = 0
+      const read = async (url: string) => (reads++, { photos: pagePhotos(await get(url)) })
+      const pageOf = (p: ShopifyProduct) => `${root}/products/${p.handle}`
       const needing = products.filter((_, i) => thin(raws[i]))
-      const urls = new Map(needing.map((p) => [String(p.id), `${root}/products/${p.handle}`]))
-      const pages = await readSlowly(
-        `${new URL(base).host}#pagephotos`,
-        [...urls.keys()],
-        async (id) => ({ photos: pagePhotos(await get(urls.get(id)!)) }),
-        PAGE_PHOTOS_MAX_AGE_DAYS
-      )
-      raws = products.map((p, i) => (pages.has(String(p.id)) ? raw(p, pages.get(String(p.id))!.photos) : raws[i]))
+      const byId = new Map(needing.map((p) => [String(p.id), p]))
+      const pages = await readSlowly(store, [...byId.keys()], (id) => read(pageOf(byId.get(id)!)), PAGE_PHOTOS_MAX_AGE_DAYS)
+      const photosOf = new Map([...pages].map(([id, d]) => [id, d.photos]))
+
+      // Some pages only show the selected colour's extra photos (Sato). Where the
+      // page gave one colour several photos but left others with one, read the
+      // page opened on each of those colours too.
+      const colourPages = new Map<string, string>() // cache id → url
+      for (const p of needing) {
+        const photos = photosOf.get(String(p.id))
+        if (!photos) continue
+        const r = raw(p, photos)
+        if (!r.colors.some((c) => (c.images?.length ?? 0) >= 3)) continue
+        for (const c of r.colors) {
+          if ((c.images?.length ?? 0) > 1) continue
+          const parts = c.name.split(' / ')
+          const v = p.variants.find((v) => parts.every((part) => [v.option1, v.option2, v.option3].includes(part)))
+          if (v) colourPages.set(`${p.id}:${v.id}`, `${pageOf(p)}?variant=${v.id}`)
+        }
+      }
+      if (colourPages.size) {
+        const more = await readSlowly(store, [...colourPages.keys()], (id) => read(colourPages.get(id)!), PAGE_PHOTOS_MAX_AGE_DAYS, MAX_DETAILS_PER_SYNC - reads)
+        for (const [id, d] of more) {
+          const productId = id.split(':')[0]
+          photosOf.set(productId, [...(photosOf.get(productId) ?? []), ...d.photos])
+        }
+      }
+      raws = products.map((p, i) => (photosOf.has(String(p.id)) ? raw(p, photosOf.get(String(p.id))) : raws[i]))
     }
     return {
       products: raws,
