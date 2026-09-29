@@ -218,6 +218,9 @@ async function genderMembership(
   return { genders: map, kids, categories: new Map([...categories].map(([id, c]) => [id, c.cat])) }
 }
 
+const RX = /\s*[-/]?\s*RX$/i
+const isPrescription = (v: ShopifyVariant) => [v.option1, v.option2, v.option3, v.title].some((o) => !!o && RX.test(o.trim()))
+
 function toRaw(base: string, p: ShopifyProduct, currency: string | null, gender: Gender | null, kids: boolean): RawProduct {
   const variants = p.variants ?? []
   const sizeOptIndex = (p.options ?? []).findIndex((o) => isSizeOption(o.name))
@@ -264,15 +267,21 @@ function toRaw(base: string, p: ShopifyProduct, currency: string | null, gender:
     const bySize = new Map<string, boolean>()
     for (const v of variants) {
       // "54-17RX" is the same frame fitted with prescription lenses, not another size.
-      const label = v[key]?.replace(/\s*[-/]?\s*RX$/i, '').trim()
+      const label = v[key]?.replace(RX, '').trim()
       if (!label || label === 'Default Title') continue
       bySize.set(label, (bySize.get(label) ?? false) || v.available !== false)
     }
     sizes = [...bySize].map(([label, available]) => ({ label, available }))
   }
 
+  // Eyewear stores list a cheaper prescription-ready version ("49-22RX", frame
+  // only) beside each frame; it isn't the item's price, and its appearing
+  // would otherwise look like a markdown. Price from the regular versions.
+  const regular = variants.filter((v) => !isPrescription(v))
+  const priced = regular.length ? regular : variants
   const inStock = variants.filter((v) => v.available !== false)
-  const pool = inStock.length ? inStock : variants
+  const pricedInStock = priced.filter((v) => v.available !== false)
+  const pool = pricedInStock.length ? pricedInStock : priced
   const cheapest = pool.reduce<ShopifyVariant | null>(
     (best, v) => (!best || parseFloat(v.price) < parseFloat(best.price) ? v : best),
     null
