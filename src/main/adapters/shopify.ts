@@ -3,6 +3,7 @@ import { load } from 'cheerio'
 import { collectionCategory, collectionGender, isKids, isSizeOption } from '../classify'
 import * as db from '../db'
 import { fetchJson, fetchText, HttpError, mapLimit, sleep, tryFetchJson } from '../http'
+import { pacer, readSlowly } from './gentle'
 import type { Adapter, FetchResult, RawProduct } from './types'
 
 interface ShopifyVariant {
@@ -15,6 +16,7 @@ interface ShopifyVariant {
   compare_at_price: string | null
   available?: boolean
   featured_image?: { src: string } | null
+  sku?: string | null
 }
 
 interface ShopifyProduct {
@@ -218,14 +220,148 @@ async function genderMembership(
   return { genders: map, kids, categories: new Map([...categories].map(([id, c]) => [id, c.cat])) }
 }
 
+const COLOUR_OPTION = /\b(colou?rs?|colou?rways?|couleurs?|coloris|colori|colore|farben?|colou?res)\b/i
+
+/** Words of a name or file name, space-padded for whole-word matching: "SIRA_E-1-side-1" → " sira e 1 side 1 ". */
+const words = (s: string) => ` ${s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `
+
+/** A photo's file name without extension, Shopify's upload suffix or size, so copies of one photo compare equal. */
+function photoBase(src: string): string {
+  return (src.split('?')[0].split('/').pop() ?? '')
+    .toLowerCase()
+    .replace(/\.(jpe?g|png|webp|gif)$/, '')
+    .replace(/_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, '')
+    .replace(/_(\d+x\d*|grande|large|medium|small|compact|master)$/, '')
+    // Theme asset copies: "8516e1fa8ba0--AHLEM-FW26-ELYSEE-Champagne-02-92aaa9".
+    .replace(/^[0-9a-f]{12}--/, '')
+    .replace(/-[0-9a-f]{6}$/, '')
+}
+
+/**
+ * The parts of variant SKUs that identify a colour ("M3141.SG.BG.50" → "bg"):
+ * segments with one value per colour, different for every colour.
+ */
+function skuCodes(variants: ShopifyVariant[], colourOfVariant: Map<number, string>): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  const segs = variants.map((v) => (v.sku ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean))
+  for (let i = 0; i < Math.max(0, ...segs.map((s) => s.length)); i++) {
+    const byColour = new Map<string, Set<string>>()
+    variants.forEach((v, j) => {
+      const colour = colourOfVariant.get(v.id)
+      if (colour && segs[j][i]) (byColour.get(colour) ?? byColour.set(colour, new Set()).get(colour)!).add(segs[j][i])
+    })
+    const codes = [...byColour.values()].map((set) => [...set])
+    if (codes.length < 2 || codes.some((c) => c.length !== 1)) continue
+    if (new Set(codes.map((c) => c[0])).size !== codes.length) continue
+    for (const [colour, set] of byColour) out.set(colour, [...(out.get(colour) ?? []), ...set])
+  }
+  return out
+}
+
+/**
+ * Gives each colour its photos. Stores formally link only one photo to each
+ * colour, so the rest are found by file name when the store names files after
+ * the colour ("Palais-Garnier_Champagne_1_grey.jpg", "SIRA_E-1-side-1.jpg") or
+ * its SKU code ("m3141-bg-50-pedestal.jpg"). Stores that don't name files that
+ * way usually put a colour's photos right after its linked one.
+ */
+function assignPhotos(
+  p: ShopifyProduct,
+  variants: ShopifyVariant[],
+  byName: Map<string, Colorway>,
+  colourOfVariant: Map<number, string>,
+  pagePhotos: string[]
+) {
+  const codes = skuCodes(variants, colourOfVariant)
+  const keys = new Map<string, string[]>()
+  for (const name of byName.keys()) {
+    const parts = [name, ...name.split(' / '), ...(codes.get(name) ?? [])]
+    keys.set(name, [...new Set(parts.map(words))].filter((k) => k.replace(/ /g, '').length >= 2))
+  }
+  // Longest matching key wins ("peony gold" over "gold"); a tie means no match.
+  const byFileName = (src: string): string | null => {
+    const w = words(photoBase(src))
+    let best: string | null = null
+    let bestLen = 0
+    let tie = false
+    for (const [name, ks] of keys) {
+      const len = Math.max(0, ...ks.filter((k) => w.includes(k)).map((k) => k.length))
+      if (len > bestLen) [best, bestLen, tie] = [name, len, false]
+      else if (len && len === bestLen && name !== best) tie = true
+    }
+    return tie ? null : best
+  }
+
+  const tagged = new Map<string, string>() // photo base → colour, from the store's own links
+  for (const im of p.images ?? []) {
+    const colour = im.variant_ids?.map((id) => colourOfVariant.get(id)).find(Boolean)
+    if (colour) tagged.set(photoBase(im.src), colour)
+  }
+  const owners = (p.images ?? []).map((im) => {
+    const base = photoBase(im.src)
+    return { src: im.src, owner: tagged.get(base) ?? null, named: tagged.has(base) ? null : byFileName(im.src) }
+  })
+  const namesFiles = owners.some((o) => o.named)
+  let current: string | null = null
+  for (const o of owners) {
+    const owner = o.owner ?? o.named
+    if (owner) current = owner
+    else if (namesFiles) continue // unnamed photos in a named set belong to no one colour
+    if (current) byName.get(current)?.images!.push(o.src)
+  }
+
+  // Photos only shown on the product page: kept when named after this product and one colour.
+  const handleWords = words(p.handle).trim().split(' ').filter((w) => w.length >= 3)
+  const known = new Set((p.images ?? []).map((im) => photoBase(im.src)))
+  for (const src of pagePhotos) {
+    const base = photoBase(src)
+    if (known.has(base) || !handleWords.some((h) => words(base).includes(` ${h} `))) continue
+    const owner = byFileName(src)
+    if (!owner) continue
+    known.add(base)
+    byName.get(owner)?.images!.push(src)
+  }
+
+  // Lead each colour with the photo the store linked to it; one copy of each photo.
+  for (const c of byName.values()) {
+    const seen = new Set<string>()
+    c.images = (c.image ? [c.image, ...c.images!] : c.images!).filter((src) => !seen.has(photoBase(src)) && !!seen.add(photoBase(src)))
+  }
+}
+
+/** Product photos in a product page's HTML (Shopify CDN files and theme assets), full size. */
+export function pagePhotos(html: string): string[] {
+  const found = new Map<string, string>()
+  // Pages also embed URLs inside JSON, with escaped slashes.
+  const text = html.replace(/\\\//g, '/')
+  for (const m of text.matchAll(/(?:https?:)?\/\/[^"'\s()]+?\/(?:cdn\/shop\/files|s\/files\/[\d/]+\/(?:files|t\/\d+\/assets))\/[^"'\s?()]+?\.(?:jpe?g|png|webp)/gi)) {
+    const url = (m[0].startsWith('//') ? `https:${m[0]}` : m[0]).replace(/_(\d+x\d*|grande|large|medium|small|compact|master)(\.\w+)$/, '$2')
+    const base = photoBase(url)
+    if (!found.has(base)) found.set(base, url)
+  }
+  return [...found.values()]
+}
+
+// Page photos rarely change; re-read a product's page after this long.
+const PAGE_PHOTOS_MAX_AGE_DAYS = 30
+
 const RX = /\s*[-/]?\s*RX$/i
 const isPrescription = (v: ShopifyVariant) => [v.option1, v.option2, v.option3, v.title].some((o) => !!o && RX.test(o.trim()))
 
-function toRaw(base: string, p: ShopifyProduct, currency: string | null, gender: Gender | null, kids: boolean): RawProduct {
+function toRaw(
+  base: string,
+  p: ShopifyProduct,
+  currency: string | null,
+  gender: Gender | null,
+  kids: boolean,
+  /** Extra photos found on the product's own page (see pagePhotos). */
+  pagePhotos: string[] = []
+): RawProduct {
   const variants = p.variants ?? []
   const sizeOptIndex = (p.options ?? []).findIndex((o) => isSizeOption(o.name))
-  // A lone non-default option (e.g. "Title: S") is almost always size.
-  const onlyOption = p.options?.length === 1 && p.options[0].name !== 'Title' ? 0 : -1
+  // A lone non-default option (e.g. "Title: S") is almost always size, unless
+  // it's named as colour (eyewear shops often sell each frame in colours only).
+  const onlyOption = p.options?.length === 1 && p.options[0].name !== 'Title' && !COLOUR_OPTION.test(p.options[0].name) ? 0 : -1
   const idx = sizeOptIndex >= 0 ? sizeOptIndex : onlyOption
 
   // Every other real option (Color, Lens, Frame, Finish…) describes the colourway.
@@ -249,14 +385,7 @@ function toRaw(base: string, p: ShopifyProduct, currency: string | null, gender:
       c.image ??= image
       byName.set(name, c)
     }
-    // Stores usually tag only the first photo of each colour; the untagged
-    // photos that follow it belong to the same colour.
-    let current: string | null = null
-    for (const im of p.images ?? []) {
-      const tagged = im.variant_ids?.map((id) => colourOfVariant.get(id)).find(Boolean)
-      if (tagged) current = tagged
-      if (current) byName.get(current)?.images!.push(im.src)
-    }
+    assignPhotos(p, variants, byName, colourOfVariant, pagePhotos)
     for (const c of byName.values()) if (!c.images!.length && c.image) c.images = [c.image]
     colors.push(...byName.values())
   }
@@ -298,7 +427,7 @@ function toRaw(base: string, p: ShopifyProduct, currency: string | null, gender:
     url: `${base}/products/${p.handle}`,
     productType: p.product_type || '',
     tags: Array.isArray(p.tags) ? p.tags : (p.tags || '').split(',').map((t) => t.trim()).filter(Boolean),
-    images: (p.images ?? []).map((i) => i.src),
+    images: [...new Set([...(p.images ?? []).map((i) => i.src), ...colors.flatMap((c) => c.images ?? [])])],
     price,
     compareAtPrice: compare && compare > price ? compare : null,
     currency,
@@ -328,8 +457,31 @@ export const shopify: Adapter = {
     // Collections are looked up on the main site: translated handles (e.g. Boglioli's
     // "uomo" shown as "man" under /en-us) often return nothing in the English catalogue.
     const { genders, kids, categories } = await genderMembership(base)
+    const raw = (p: ShopifyProduct, photos?: string[]) => ({
+      ...toRaw(root, p, currency, genders.get(p.id) ?? null, kids.has(p.id), photos),
+      storeCategory: categories.get(p.id) ?? null
+    })
+    let raws = products.map((p) => raw(p))
+
+    // Some stores (eyewear especially) keep most photos off the product feed and
+    // only show them on the product page. Where colours mostly have a single
+    // photo, read those pages slowly, once per product, and remember them.
+    const thin = (r: RawProduct) => r.colors.length > 1 && r.colors.filter((c) => (c.images?.length ?? 0) <= 1).length > r.colors.length / 2
+    const multi = raws.filter((r) => r.colors.length > 1)
+    if (multi.length >= 3 && multi.filter(thin).length >= multi.length / 2) {
+      const get = pacer()
+      const needing = products.filter((_, i) => thin(raws[i]))
+      const urls = new Map(needing.map((p) => [String(p.id), `${root}/products/${p.handle}`]))
+      const pages = await readSlowly(
+        `${new URL(base).host}#pagephotos`,
+        [...urls.keys()],
+        async (id) => ({ photos: pagePhotos(await get(urls.get(id)!)) }),
+        PAGE_PHOTOS_MAX_AGE_DAYS
+      )
+      raws = products.map((p, i) => (pages.has(String(p.id)) ? raw(p, pages.get(String(p.id))!.photos) : raws[i]))
+    }
     return {
-      products: products.map((p) => ({ ...toRaw(root, p, currency, genders.get(p.id) ?? null, kids.has(p.id)), storeCategory: categories.get(p.id) ?? null })),
+      products: raws,
       currency,
       complete,
       source: root

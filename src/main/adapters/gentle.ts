@@ -42,29 +42,51 @@ export function wanted(gender: Gender | null): boolean {
 }
 
 /**
- * Fills listing-only products with cached product-page details, reading a few
- * more product pages this sync. Stops reading as soon as the store pushes back.
+ * Reads a page for each item slowly and remembers the result: items never read
+ * come first, then those read longest ago (only once older than `maxAgeDays`),
+ * at most MAX_DETAILS_PER_SYNC per sync. Stops as soon as the store pushes back.
+ * Returns what's known for every item, fresh or remembered.
  */
-export async function withDetails(
+export async function readSlowly<T>(
   store: string,
-  items: RawProduct[],
-  read: (item: RawProduct) => Promise<ItemDetail | null>
-): Promise<RawProduct[]> {
+  ids: string[],
+  read: (id: string) => Promise<T | null>,
+  maxAgeDays = 0
+): Promise<Map<string, T>> {
   const cache = db.detailCache(store)
-  const queue = [...items].sort((a, b) => (cache.get(a.externalId)?.fetchedAt ?? '').localeCompare(cache.get(b.externalId)?.fetchedAt ?? ''))
-  for (const item of queue.slice(0, MAX_DETAILS_PER_SYNC)) {
+  const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString()
+  const due = ids
+    .filter((id) => (cache.get(id)?.fetchedAt ?? '') <= cutoff)
+    .sort((a, b) => (cache.get(a)?.fetchedAt ?? '').localeCompare(cache.get(b)?.fetchedAt ?? ''))
+  for (const id of due.slice(0, MAX_DETAILS_PER_SYNC)) {
     try {
-      const detail = await read(item)
-      if (detail) {
-        db.saveDetail(store, item.externalId, detail)
-        cache.set(item.externalId, { data: detail, fetchedAt: new Date().toISOString() })
+      const data = await read(id)
+      if (data) {
+        db.saveDetail(store, id, data)
+        cache.set(id, { data, fetchedAt: new Date().toISOString() })
       }
     } catch (e) {
       if (e instanceof HttpError && (e.status === 403 || e.status === 429)) break
     }
   }
+  const out = new Map<string, T>()
+  for (const id of ids) {
+    const hit = cache.get(id)
+    if (hit) out.set(id, hit.data as T)
+  }
+  return out
+}
+
+/** Fills listing-only products with product-page details (sizes, stock), read slowly. */
+export async function withDetails(
+  store: string,
+  items: RawProduct[],
+  read: (item: RawProduct) => Promise<ItemDetail | null>
+): Promise<RawProduct[]> {
+  const byId = new Map(items.map((i) => [i.externalId, i]))
+  const details = await readSlowly(store, [...byId.keys()], (id) => read(byId.get(id)!))
   return items.map((item) => {
-    const d = cache.get(item.externalId)?.data as ItemDetail | undefined
+    const d = details.get(item.externalId)
     if (!d) return item
     return {
       ...item,
