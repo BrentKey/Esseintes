@@ -141,7 +141,7 @@ export function PromoBar() {
   const [i, setI] = useState(0)
   useEffect(() => {
     if (promotions.length < 2) return
-    const t = setInterval(() => setI((n) => (n + 1) % promotions.length), 5000)
+    const t = setInterval(() => setI((n) => (n + 1) % promotions.length), 3 * 60_000)
     return () => clearInterval(t)
   }, [promotions.length])
 

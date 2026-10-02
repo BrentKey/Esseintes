@@ -172,6 +172,14 @@ export function openDb(file: string) {
     // Markdowns flagged when stores first switched to their English/US catalogue weren't real.
     db.exec('UPDATE products SET price_dropped_at = NULL, previous_price = NULL')
   )
+  runOnce('price-from-every-size-2026-10-02', () => {
+    // Prices now come from every size, not just those in stock. Forgetting each
+    // store's source makes its next sync skip markdown detection once, so items
+    // whose cheaper size was sold out don't look reduced. Oliver Peoples drops
+    // recorded under the old rule were sizes coming back into stock.
+    db.exec('UPDATE stores SET source = NULL')
+    db.exec("UPDATE products SET price_dropped_at = NULL, previous_price = NULL WHERE store_id IN (SELECT id FROM stores WHERE url LIKE '%oliverpeoples.com%')")
+  })
   db.exec('CREATE INDEX IF NOT EXISTS products_model ON products(model_key)')
   // Clear "just reduced" flags left by exchange-rate wobble before markdowns needed to be 5%+.
   db.prepare('UPDATE products SET price_dropped_at = NULL, previous_price = NULL WHERE previous_price IS NOT NULL AND price > previous_price * ?').run(1 - MARKDOWN)
@@ -340,7 +348,7 @@ export interface StoredProductInput {
 
 export function existingProducts(storeId: number) {
   const rows = db
-    .prepare('SELECT id, price, compare_at_price, sizes, colors, available, removed_at FROM products WHERE store_id = ?')
+    .prepare('SELECT id, external_id, url, price, compare_at_price, sizes, colors, available, removed_at FROM products WHERE store_id = ?')
     .all(storeId) as any[]
   return new Map(rows.map((r) => [r.id as string, r]))
 }

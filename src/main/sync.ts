@@ -99,6 +99,14 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
         !raw.kids &&
         !isKids(raw.title, raw.productType, raw.tags.join(' '), urlPath(raw.url))
     )
+    // A store moved to another reader may identify products differently; the same
+    // web address is the same product, so it keeps its history and saved state.
+    const byUrl = new Map([...existing.values()].map((r) => [r.url as string, r.external_id as string]))
+    for (const raw of products) {
+      if (existing.has(`${store.id}:${raw.externalId}`)) continue
+      const known = byUrl.get(raw.url)
+      if (known) raw.externalId = known
+    }
     const brandOf = brandResolver(store.name, products.map((p) => p.brand))
     const byId = new Map<string, Omit<db.StoredProductInput, 'position'>>()
     for (const raw of products) {

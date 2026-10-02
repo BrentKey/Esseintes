@@ -1,5 +1,6 @@
 import { load } from 'cheerio'
-import type { Size } from '@shared/types'
+import type { Gender, Size } from '@shared/types'
+import { collectionGender } from '../classify'
 import { fetchText, mapLimit, sleep } from '../http'
 import type { Adapter, FetchResult, RawProduct } from './types'
 
@@ -117,8 +118,8 @@ export function parseProduct(url: string, html: string): RawProduct | null {
     }))
     .filter((o) => !isNaN(o.price))
   if (!prices.length) return null
-  const pool = prices.some((o) => o.available) ? prices.filter((o) => o.available) : prices
-  const best = pool.reduce((a, b) => (b.price < a.price ? b : a))
+  // Every offer, in stock or not: a cheaper size selling out isn't a price change.
+  const best = prices.reduce((a, b) => (b.price < a.price ? b : a))
   const strike = best.strike ? parseFloat(best.strike.price) : NaN
 
   const sizes: Size[] = []
@@ -157,7 +158,12 @@ export function parseProduct(url: string, html: string): RawProduct | null {
     else if (Array.isArray(centra.media?.full)) images = []
   }
 
-  const category = [p.category, $('meta[property="product:category"]').attr('content')].filter(Boolean).join(' ')
+  // Centra also says which department the item is in ("MENS", "WOMENS") and its
+  // category (["MENS", "JERSEY"]); the names alone often don't.
+  const department = String(centra?.Department_text ?? asArray<string>(centra?.categoryName)[0] ?? '')
+  const gender: Gender | null = /\bunisex\b/i.test(department) ? 'unisex' : collectionGender(department, department)
+  const centraCategory = asArray<string>(centra?.categoryName).filter((n) => typeof n === 'string').slice(1).join(' ')
+  const category = [p.category, $('meta[property="product:category"]').attr('content'), centraCategory].filter(Boolean).join(' ')
 
   return {
     externalId: url,
@@ -175,7 +181,7 @@ export function parseProduct(url: string, html: string): RawProduct | null {
     sizes,
     colors: byColor.size > 1 ? [...byColor.values()] : [],
     available,
-    collectionGender: null
+    collectionGender: gender
   }
 }
 
@@ -216,7 +222,8 @@ export const generic: Adapter = {
     return {
       products,
       currency: products[0]?.currency ?? null,
-      complete: urls.length <= MAX_PRODUCT_URLS && failures < capped.length * 0.1
+      complete: urls.length <= MAX_PRODUCT_URLS && failures < capped.length * 0.1,
+      source: base
     }
   }
 }

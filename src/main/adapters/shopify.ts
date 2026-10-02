@@ -419,8 +419,9 @@ function toRaw(
   const regular = variants.filter((v) => !isPrescription(v))
   const priced = regular.length ? regular : variants
   const inStock = variants.filter((v) => v.available !== false)
-  const pricedInStock = priced.filter((v) => v.available !== false)
-  const pool = pricedInStock.length ? pricedInStock : priced
+  // Price from every version, in stock or not: when sizes differ in price (a 48
+  // frame $545, a 50 $578), a size selling out or returning isn't a price change.
+  const pool = priced
   const cheapest = pool.reduce<ShopifyVariant | null>(
     (best, v) => (!best || parseFloat(v.price) < parseFloat(best.price) ? v : best),
     null
