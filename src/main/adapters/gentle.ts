@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import type { Colorway, Gender, Size } from '@shared/types'
 import * as db from '../db'
 import { HttpError, fetchText, sleep } from '../http'
@@ -41,6 +42,29 @@ export function wanted(gender: Gender | null): boolean {
   return pref === 'all' || !gender || gender === 'unisex' || gender === pref
 }
 
+// Page reading can wait until every store's catalogue is in, so a sync shows new
+// arrivals and prices quickly. Sync runs each store's read inside `pageReading`,
+// telling readSlowly whether to read now ('inline'), queue the reads for after
+// the sync ('defer'), or use what's remembered only ('cached').
+type PageMode = { mode: 'inline' | 'defer' | 'cached'; storeId?: number }
+export const pageReading = new AsyncLocalStorage<PageMode>()
+
+interface PendingReads {
+  storeId: number
+  run: () => Promise<number>
+}
+let pending: PendingReads[] = []
+// Pages queued per store this sync: all of a store's queued reads share one budget.
+let queuedPages = new Map<number, number>()
+
+/** Takes the page reads queued during a sync; each `run` returns how many pages it read. */
+export function takePendingReads(): PendingReads[] {
+  const out = pending
+  pending = []
+  queuedPages = new Map()
+  return out
+}
+
 /**
  * Reads a page for each item slowly and remembers the result: items never read
  * come first, then those read longest ago (only once older than `maxAgeDays`),
@@ -56,19 +80,32 @@ export async function readSlowly<T>(
 ): Promise<Map<string, T>> {
   const cache = db.detailCache(store)
   const cutoff = new Date(Date.now() - maxAgeDays * 86_400_000).toISOString()
+  const ctx = pageReading.getStore()
+  const used = ctx?.mode === 'defer' && ctx.storeId != null ? (queuedPages.get(ctx.storeId) ?? 0) : 0
   const due = ids
     .filter((id) => (cache.get(id)?.fetchedAt ?? '') <= cutoff)
     .sort((a, b) => (cache.get(a)?.fetchedAt ?? '').localeCompare(cache.get(b)?.fetchedAt ?? ''))
-  for (const id of due.slice(0, Math.max(0, limit))) {
-    try {
-      const data = await read(id)
-      if (data) {
-        db.saveDetail(store, id, data)
-        cache.set(id, { data, fetchedAt: new Date().toISOString() })
+    .slice(0, Math.max(0, Math.min(limit, MAX_DETAILS_PER_SYNC - used)))
+  const readDue = async () => {
+    let n = 0
+    for (const id of due) {
+      try {
+        const data = await read(id)
+        n++
+        if (data) {
+          db.saveDetail(store, id, data)
+          cache.set(id, { data, fetchedAt: new Date().toISOString() })
+        }
+      } catch (e) {
+        if (e instanceof HttpError && (e.status === 403 || e.status === 429)) break
       }
-    } catch (e) {
-      if (e instanceof HttpError && (e.status === 403 || e.status === 429)) break
     }
+    return n
+  }
+  if (!ctx || ctx.mode === 'inline') await readDue()
+  else if (ctx.mode === 'defer' && due.length && ctx.storeId != null) {
+    pending.push({ storeId: ctx.storeId, run: readDue })
+    queuedPages.set(ctx.storeId, used + due.length)
   }
   const out = new Map<string, T>()
   for (const id of ids) {

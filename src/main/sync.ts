@@ -1,6 +1,7 @@
 import { load } from 'cheerio'
 import type { Size, Store, SyncStatus, SyncStoreResult } from '@shared/types'
 import { auralee } from './adapters/auralee'
+import { pageReading, takePendingReads } from './adapters/gentle'
 import { depict } from './adapters/depict'
 import { generic } from './adapters/generic'
 import { shopify } from './adapters/shopify'
@@ -16,7 +17,9 @@ import { refreshRates } from './currency'
 import { detectPromotions } from './promotions'
 
 const ADAPTERS: Adapter[] = [auralee, shopify, woocommerce, depict, generic]
-const STORE_CONCURRENCY = 3
+// Different stores are read side by side; each store's own pace is unchanged.
+const STORE_CONCURRENCY = 5
+const PAGE_READ_CONCURRENCY = 3
 // Listings that aren't things you'd buy on their own: gift cards, shipping
 // add-ons, and lens upgrades that eyewear stores list as separate products.
 const NOT_A_PRODUCT = /\b(gift ?cards?|e-?gift|gift ?vouchers?|gift ?certificates?|shipping protection|route package protection|prescription lens(es)?|custom lens(es)?|lens (upgrade|option)s?|blue light filter lens(es)?|rox_lens)\b/i
@@ -68,7 +71,7 @@ export function htmlToText(html: string): string {
     .trim()
 }
 
-async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreResult> {
+async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cached' = 'defer'): Promise<SyncStoreResult> {
   const result: SyncStoreResult = { storeId: store.id, storeName: store.name, added: 0, updated: 0, removed: 0, priceDrops: 0, error: null }
   try {
     // Stores on the generic fallback are re-checked, so they move to a dedicated reader once one exists.
@@ -76,7 +79,7 @@ async function syncStore(store: Store, alerts: NewAlert[]): Promise<SyncStoreRes
     const adapter = known ?? (await detectPlatform(store.url))
     if (adapter.platform !== store.platform) db.updateStore(store.id, { platform: adapter.platform })
 
-    const fetched = await adapter.fetchAll(store.url, () => {})
+    const fetched = await pageReading.run({ mode: pages, storeId: store.id }, () => adapter.fetchAll(store.url, () => {}))
     if (!fetched.products.length) throw new Error('No products found. The store may be empty, or it may block automated access.')
     const existing = db.existingProducts(store.id)
     const liveBefore = [...existing.values()].filter((r) => !r.removed_at).length
@@ -280,8 +283,13 @@ export async function runStaleSync(): Promise<void> {
   if (stale.length) await runSync(undefined, new Set(stale.map((s) => s.id)))
 }
 
-/** Reads one store, the given set of stores, or (with neither) every enabled store. */
-export async function runSync(storeId?: number, only?: Set<number>): Promise<void> {
+/**
+ * Reads one store, the given set of stores, or (with neither) every enabled store.
+ * Catalogues come first; slow product-page reading (photos, sizes at shops that
+ * only show them on product pages) runs afterwards, then the stores it touched
+ * are quickly re-read so the new details show. `pages: 'cached'` is that re-read.
+ */
+export async function runSync(storeId?: number, only?: Set<number>, pages: 'defer' | 'cached' = 'defer'): Promise<void> {
   if (status.running) {
     if (storeId == null) queued = null
     else if (queued !== null) (queued ??= new Set()).add(storeId)
@@ -295,12 +303,24 @@ export async function runSync(storeId?: number, only?: Set<number>): Promise<voi
   const alerts: NewAlert[] = []
   await mapLimit(stores, STORE_CONCURRENCY, async (store) => {
     emit({ currentStore: store.name })
-    results.push(await syncStore(store, alerts))
+    results.push(await syncStore(store, alerts, pages))
     emit({ completed: results.length, results: [...results] })
   })
   db.purgeOldRemoved()
   emit({ running: false, currentStore: null, lastRunAt: new Date().toISOString() })
   if (alerts.length) alertListener(alerts)
+
+  // Product pages queued during the sync, read now at each store's usual pace.
+  const reads = takePendingReads()
+  if (reads.length) {
+    const byStore = new Map<number, (() => Promise<number>)[]>()
+    for (const r of reads) byStore.set(r.storeId, [...(byStore.get(r.storeId) ?? []), r.run])
+    const touched = new Set<number>()
+    await mapLimit([...byStore], PAGE_READ_CONCURRENCY, async ([id, runs]) => {
+      for (const run of runs) if ((await run()) > 0) touched.add(id)
+    })
+    if (touched.size && queued === undefined) await runSync(undefined, touched, 'cached')
+  }
 
   const next = queued
   queued = undefined
