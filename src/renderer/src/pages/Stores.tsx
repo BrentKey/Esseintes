@@ -65,9 +65,7 @@ export function Stores() {
           <div key={s.id} className={`store-row ${s.enabled ? '' : 'disabled'}`}>
             <div className="store-row-main">
               <div>
-                <button className="store-title" onClick={() => go({ page: 'shop', title: s.name, query: { storeIds: [s.id] } })}>
-                  {s.name}
-                </button>
+                <StoreName store={s} onOpen={() => go({ page: 'shop', title: s.name, query: { storeIds: [s.id] } })} onRenamed={refresh} />
                 <div className="muted small">
                   {s.url.replace(/^https?:\/\//, '')} · {s.platform ? PLATFORM_LABEL[s.platform] : 'Detecting…'} · {s.productCount} pieces
                   {s.gender !== 'mixed' ? ` · ${s.gender === 'men' ? 'menswear' : 'womenswear'} store` : ''} · updated{' '}
@@ -130,6 +128,74 @@ export function Stores() {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+/** A store's name, opening its pieces when clicked, with a Rename link that edits it in place. */
+function StoreName({ store, onOpen, onRenamed }: { store: Store; onOpen: () => void; onRenamed: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(store.name)
+
+  async function save() {
+    const next = name.trim()
+    if (next && next !== store.name) {
+      await api.updateStore(store.id, { name: next })
+      onRenamed()
+    }
+    setEditing(false)
+  }
+
+  if (editing)
+    return (
+      <form
+        className="store-rename"
+        onSubmit={(e) => {
+          e.preventDefault()
+          save()
+        }}
+      >
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              setName(store.name)
+              setEditing(false)
+            }
+          }}
+          aria-label="Store name"
+        />
+        <button className="btn btn-small" type="submit">
+          Save
+        </button>
+        <button
+          className="btn btn-small btn-ghost"
+          type="button"
+          onClick={() => {
+            setName(store.name)
+            setEditing(false)
+          }}
+        >
+          Cancel
+        </button>
+      </form>
+    )
+  return (
+    <div className="store-name">
+      <button className="store-title" onClick={onOpen}>
+        {store.name}
+      </button>
+      <button
+        className="link small store-rename-link"
+        onClick={() => {
+          setName(store.name)
+          setEditing(true)
+        }}
+      >
+        Rename
+      </button>
     </div>
   )
 }

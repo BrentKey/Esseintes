@@ -187,7 +187,8 @@ function registerIpc() {
   ipcMain.handle('stores:import', () => importStores())
   ipcMain.handle('stores:export', () => exportStores())
   ipcMain.handle('stores:update', (_e, id: number, patch: { name?: string; enabled?: boolean }) =>
-    db.updateStore(id, { name: patch.name, enabled: patch.enabled })
+    // A blank name keeps the current one.
+    db.updateStore(id, { name: patch.name?.trim() || undefined, enabled: patch.enabled })
   )
   ipcMain.handle('stores:remove', (_e, id: number) => db.deleteStore(id))
 
@@ -271,8 +272,6 @@ app.whenReady().then(async () => {
   const dbFile = join(app.getPath('userData'), 'esseintes.db')
   migrateFromStockroom(dbFile)
   db.openDb(dbFile)
-  // Tidy names saved before "Official Store"-style suffixes were stripped.
-  for (const s of db.listStores()) if (cleanStoreName(s.name) !== s.name) db.updateStore(s.id, { name: cleanStoreName(s.name) })
   // Remember the previous session so the home page can show what's new since then.
   previousVisit = db.getSettings().lastVisitAt
   db.saveSettings({ lastVisitAt: new Date().toISOString() })

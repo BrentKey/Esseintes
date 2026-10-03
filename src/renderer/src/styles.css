@@ -1645,3 +1645,28 @@ img {
   font-weight: 400;
   color: var(--ink-2);
 }
+
+.store-name {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.store-rename-link {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.store-row:hover .store-rename-link,
+.store-rename-link:focus {
+  opacity: 1;
+}
+.store-rename {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.store-rename input {
+  font-family: var(--serif);
+  font-size: 20px;
+  padding: 4px 8px;
+  min-width: 260px;
+}
