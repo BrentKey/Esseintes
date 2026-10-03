@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { DEPARTMENTS, departmentOf } from '@shared/categories'
+import { DEPARTMENTS } from '@shared/categories'
 import type { GroupLabel, GroupRule, ReviewChoice, ReviewGroup, ReviewItem, StoreReview } from '@shared/types'
 import { useData } from '../data'
 import { api, money, sized } from '../lib'
@@ -10,6 +10,15 @@ const LABEL: Record<GroupLabel, string> = {
   women: 'Women’s',
   unisex: 'Unisex',
   unknown: 'Unsure',
+  notForSale: 'Not for sale'
+}
+
+// Section headings; groups arrive sorted by label (unsure first), see review.ts.
+const SECTION: Record<GroupLabel, string> = {
+  unknown: 'Unsure',
+  men: 'Men’s',
+  unisex: 'Unisex',
+  women: 'Women’s',
   notForSale: 'Not for sale'
 }
 
@@ -52,7 +61,7 @@ export function Review({ storeId }: { storeId: number }) {
   const sections = useMemo(() => {
     const out: { name: string; groups: ReviewGroup[] }[] = []
     for (const g of review?.groups ?? []) {
-      const name = g.label === 'notForSale' ? 'Not for sale' : departmentOf(g.category)
+      const name = SECTION[g.label]
       const last = out[out.length - 1]
       if (last?.name === name) last.groups.push(g)
       else out.push({ name, groups: [g] })
@@ -125,7 +134,9 @@ export function Review({ storeId }: { storeId: number }) {
 
       {sections.map((sec) => (
         <section key={sec.name} className="review-section">
-          <h2 className="review-section-title">{sec.name}</h2>
+          <h2 className="review-section-title">
+            {sec.name} <span className="muted small">{sec.groups.reduce((n, g) => n + g.count, 0).toLocaleString()} pieces</span>
+          </h2>
           {sec.groups.map((g) => {
             const rule = rules[g.key] ?? { choice: g.choice }
             const items = open[g.key]

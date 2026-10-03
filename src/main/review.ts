@@ -56,18 +56,13 @@ function relabel(item: db.ReviewInput, choice: ReviewChoice, category: string | 
   return { ...item, gender, category: cat, modelKey: [store, cat, gender, ...model].join('|') }
 }
 
-// Groups read in menu order: departments and their categories, then by label.
+// Groups read by label, the ones needing a decision first, then categories in menu order.
 const CATEGORY_ORDER = DEPARTMENTS.flatMap((d) => d.categories)
-const LABEL_ORDER: GroupLabel[] = ['men', 'unisex', 'unknown', 'women', 'notForSale']
+const LABEL_ORDER: GroupLabel[] = ['unknown', 'men', 'unisex', 'women', 'notForSale']
 
 function sortGroups(groups: ReviewGroup[]) {
   const cat = (c: string) => (CATEGORY_ORDER.includes(c) ? CATEGORY_ORDER.indexOf(c) : CATEGORY_ORDER.length)
-  return groups.sort(
-    (a, b) =>
-      Number(a.label === 'notForSale') - Number(b.label === 'notForSale') ||
-      cat(a.category) - cat(b.category) ||
-      LABEL_ORDER.indexOf(a.label) - LABEL_ORDER.indexOf(b.label)
-  )
+  return groups.sort((a, b) => LABEL_ORDER.indexOf(a.label) - LABEL_ORDER.indexOf(b.label) || cat(a.category) - cat(b.category))
 }
 
 /** What there is to review at a store: everything held after its first read, or the groups that appeared since. */
