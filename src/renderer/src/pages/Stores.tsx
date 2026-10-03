@@ -5,7 +5,7 @@ import { api, timeAgo } from '../lib'
 import { useNav } from '../nav'
 import { ReviewNotice } from '../components/ReviewNotice'
 
-const PLATFORM_LABEL: Record<string, string> = { shopify: 'Shopify', woocommerce: 'WooCommerce', depict: 'Centra (Depict)', auralee: 'Auralee (gentle)', generic: 'Generic (sitemap)' }
+const PLATFORM_LABEL: Record<string, string> = { shopify: 'Shopify', woocommerce: 'WooCommerce', depict: 'Centra (Depict)', auralee: 'Auralee (gentle)', adss: 'ADSS (Japan)', generic: 'Generic (sitemap)' }
 
 export function Stores() {
   const { go } = useNav()
