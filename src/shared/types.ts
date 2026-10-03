@@ -182,7 +182,25 @@ export interface ModelColourway {
   isNew: boolean
 }
 
+/** A size table from a store's description: a header row (sizes) and a row per measurement. */
+export interface SizeGuide {
+  title: string | null
+  header: string[]
+  rows: string[][]
+}
+
+/** Facts shown above a product's description. */
+export interface ProductFacts {
+  colour: string | null
+  composition: string | null
+  madeIn: string | null
+  sizeGuides: SizeGuide[]
+}
+
 export interface ProductDetail extends Product {
+  facts: ProductFacts
+  /** False until the product's own page has been read for facts its description lacks. */
+  pageRead: boolean
   model: ModelColourway[]
   priceHistory: PricePoint[]
   promotions: Promotion[]
@@ -322,6 +340,8 @@ export interface Api {
   queryProducts(q: ProductQuery): Promise<ProductPage>
   getProduct(id: string): Promise<ProductDetail | null>
   getHome(): Promise<HomeData>
+  /** Reads a product's page for the facts its description lacks (once; remembered). */
+  readFacts(id: string): Promise<ProductFacts | null>
   getReview(storeId: number): Promise<StoreReview>
   getReviewItems(storeId: number, key: string): Promise<ReviewItem[]>
   saveReview(storeId: number, rules: StoreRules): Promise<void>

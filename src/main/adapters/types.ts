@@ -17,6 +17,8 @@ export interface RawProduct {
   sizes: Size[]
   /** Colour options; empty when the product comes in one colour. */
   colors: Colorway[]
+  /** The colour's name when the product comes in just one (from a single colour option). */
+  colour?: string | null
   available: boolean
   /** Gender implied by the store collection the product was found in. */
   collectionGender: Gender | null

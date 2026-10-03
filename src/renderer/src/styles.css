@@ -1588,3 +1588,60 @@ img {
   justify-content: space-between;
   align-items: center;
 }
+
+/* ---------- product facts & size guide ---------- */
+.facts {
+  margin: 0 0 14px;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.facts > div {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+}
+.facts dt {
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-top: 2px;
+}
+.facts dd {
+  margin: 0;
+}
+.size-guide + .size-guide {
+  margin-top: 18px;
+}
+.size-guide-title {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+.size-guide-scroll {
+  overflow-x: auto;
+}
+.size-guide table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+.size-guide th,
+.size-guide td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--rule);
+  text-align: center;
+  white-space: nowrap;
+}
+.size-guide thead th {
+  font-weight: 600;
+  border-bottom: 1px solid var(--ink);
+}
+.size-guide tbody th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--ink-2);
+}

@@ -3,9 +3,10 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron'
 import { load } from 'cheerio'
-import type { ImportResult, ProductQuery, Settings, StoreRules } from '@shared/types'
+import type { ImportResult, ProductFacts, ProductQuery, Settings, StoreRules } from '@shared/types'
 import type { NewAlert } from './alerts'
 import * as db from './db'
+import { pageFacts } from './details'
 import { baseUrl, fetchText } from './http'
 import { cleanStoreName } from './brands'
 import { refreshRates } from './currency'
@@ -61,6 +62,22 @@ async function guessStoreName(base: string): Promise<string> {
   }
   const stem = host.split('.')[0]
   return stem.charAt(0).toUpperCase() + stem.slice(1)
+}
+
+/**
+ * Fills the facts a product's description lacks (composition, colour, origin)
+ * from its own page, read once when the piece is first opened and remembered.
+ */
+async function readFacts(id: string): Promise<ProductFacts | null> {
+  const src = db.factsSource(id)
+  if (!src) return null
+  if (src.pageRead || (src.facts.composition && src.facts.colour)) return src.facts
+  try {
+    db.savePageFacts(id, pageFacts(await fetchText(src.url), src.title))
+  } catch {
+    return src.facts // unreachable for now; tried again next time it's opened
+  }
+  return db.factsSource(id)!.facts
 }
 
 async function addStore(url: string, name?: string) {
@@ -182,6 +199,7 @@ function registerIpc() {
 
   ipcMain.handle('products:query', (_e, q: ProductQuery) => db.queryProducts(q))
   ipcMain.handle('products:get', (_e, id: string) => db.getProduct(id))
+  ipcMain.handle('products:read-facts', (_e, id: string) => readFacts(id))
   ipcMain.handle('products:favorite', (_e, id: string) => db.toggleFavorite(id))
   ipcMain.handle('products:save-favorite', (_e, id: string, size: string | null) => db.saveFavorite(id, size))
   ipcMain.handle('home:get', () => db.getHome(previousVisit))

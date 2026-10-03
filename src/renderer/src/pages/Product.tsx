@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ModelColourway, Product as P, ProductDetail } from '@shared/types'
+import type { ModelColourway, Product as P, ProductDetail, SizeGuide } from '@shared/types'
 import { External, Heart } from '../components/Icons'
 import { Price } from '../components/Price'
 import { Lightbox } from '../components/Lightbox'
@@ -33,12 +33,33 @@ export function Product({ id }: { id: string }) {
     })
   }, [id])
 
+  // Composition or colour missing from the description: read the piece's own page once.
+  const pid = p?.id
+  const needsPage = !!p && !p.pageRead && (!p.facts.composition || !p.facts.colour)
+  useEffect(() => {
+    if (!pid || !needsPage) return
+    let live = true
+    api.readFacts(pid).then((facts) => {
+      if (live && facts) setP((cur) => (cur && cur.id === pid ? { ...cur, facts, pageRead: true } : cur))
+    })
+    return () => {
+      live = false
+    }
+  }, [pid, needsPage])
+
   if (!p) return null
   const promo = bestSitewidePromo(p.promotions, p.storeId)
   const sizes = [...p.sizes].sort((a, b) => compareSizes(a.label, b.label))
   const mine = new Set(settings.mySizes.map((s) => s.toUpperCase()))
   const colour = model[sel]
   const gallery = colour?.productId === p.id && colour.images.length ? colour.images : p.images
+  // In a listing with several colours, the colour is the one picked.
+  const colourName = (p.colors.length > 1 ? colour?.name : null) ?? p.facts.colour
+  const facts = ([
+    ['Colour', colourName],
+    ['Composition', p.facts.composition],
+    ['Made in', p.facts.madeIn]
+  ] as [string, string | null][]).filter((f): f is [string, string] => !!f[1])
 
   async function pickColour(i: number) {
     const c = model[i]
@@ -174,15 +195,34 @@ export function Product({ id }: { id: string }) {
             </button>
           </div>
 
-          {p.description && (
+          {(p.description || facts.length > 0) && (
             <details className="details" open>
               <summary>Details</summary>
-              <div className="description">{p.description}</div>
+              {facts.length > 0 && (
+                <dl className="facts">
+                  {facts.map(([k, v]) => (
+                    <div key={k}>
+                      <dt>{k}</dt>
+                      <dd>{v}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {p.description && <div className="description">{p.description}</div>}
               {looksForeign(p.description) && (
                 <button className="link small translate" onClick={() => api.openExternal(translateUrl(p.url))}>
                   Read in English ↗
                 </button>
               )}
+            </details>
+          )}
+
+          {p.facts.sizeGuides.length > 0 && (
+            <details className="details">
+              <summary>Size guide</summary>
+              {p.facts.sizeGuides.map((g, i) => (
+                <SizeTable key={i} guide={g} />
+              ))}
             </details>
           )}
 
@@ -260,6 +300,32 @@ function PriceHistory({ product }: { product: ProductDetail }) {
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function SizeTable({ guide }: { guide: SizeGuide }) {
+  return (
+    <div className="size-guide">
+      {guide.title && <div className="size-guide-title">{guide.title}</div>}
+      <div className="size-guide-scroll">
+        <table>
+          <thead>
+            <tr>
+              {guide.header.map((c, i) => (
+                <th key={i}>{c}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {guide.rows.map((r, i) => (
+              <tr key={i}>
+                {r.map((c, j) => (j === 0 ? <th key={j}>{c}</th> : <td key={j}>{c}</td>))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

@@ -59,6 +59,10 @@ function toRaw(p: WooProduct): RawProduct {
     colors: ((p.attributes ?? []).find((a) => a !== sizeAttr && /colou?r|frame|lens|finish/i.test(a.name))?.terms ?? [])
       .map((t) => ({ name: decode(t.name), available: p.is_in_stock, image: null }))
       .filter((_, __, all) => all.length > 1),
+    colour: (() => {
+      const terms = (p.attributes ?? []).find((a) => a !== sizeAttr && /colou?r/i.test(a.name))?.terms ?? []
+      return terms.length === 1 ? decode(terms[0].name) : null
+    })(),
     available: p.is_in_stock,
     collectionGender: gender
   }

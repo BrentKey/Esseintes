@@ -520,6 +520,7 @@ function toRaw(
     currency,
     sizes,
     colors: colors.length > 1 ? colors : [],
+    colour: colors.length === 1 ? colors[0].name : null,
     available: inStock.length > 0,
     collectionGender: gender,
     kids

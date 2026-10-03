@@ -13,6 +13,7 @@ const api: Api = {
   listPromotions: () => ipcRenderer.invoke('promotions:list'),
   queryProducts: (q) => ipcRenderer.invoke('products:query', q),
   getProduct: (id) => ipcRenderer.invoke('products:get', id),
+  readFacts: (id) => ipcRenderer.invoke('products:read-facts', id),
   getHome: () => ipcRenderer.invoke('home:get'),
   getReview: (storeId) => ipcRenderer.invoke('review:get', storeId),
   getReviewItems: (storeId, key) => ipcRenderer.invoke('review:items', storeId, key),

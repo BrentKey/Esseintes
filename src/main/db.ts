@@ -9,6 +9,7 @@ import type {
   Product,
   ProductDetail,
   ProductPage,
+  ProductFacts,
   ProductQuery,
   Promotion,
   ReviewItem,
@@ -175,6 +176,8 @@ export function openDb(file: string) {
   ensureColumn('stores', 'rules', 'TEXT')
   ensureColumn('stores', 'new_groups', 'TEXT')
   ensureColumn('products', 'group_key', 'TEXT')
+  ensureColumn('products', 'details', 'TEXT')
+  ensureColumn('products', 'page_details', 'TEXT')
   runOnce('reset-price-history-2026-09-27', () => {
     // Earlier versions recorded prices from mis-read catalogues; start the history
     // again from each product's current price.
@@ -449,6 +452,8 @@ export interface StoredProductInput {
   colorLabel: string | null
   /** The review group the piece was sorted into (see groupKey), at reviewed stores. */
   groupKey?: string | null
+  /** Colour, composition, origin and size guides found in the description. */
+  details?: ProductFacts
 }
 
 export function existingProducts(storeId: number) {
@@ -467,13 +472,13 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
     stmt(
       `INSERT INTO products (id, store_id, external_id, title, brand, description, url, product_type, tags, category, gender,
         images, price, compare_at_price, currency, sizes, available, first_seen_at, initial, last_seen_at, updated_at, position, colors,
-        model_key, color_label, group_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        model_key, color_label, group_key, details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       p.id, p.storeId, p.externalId, p.title, p.brand, p.description, p.url, p.productType, JSON.stringify(p.tags),
       p.category, p.gender, JSON.stringify(p.images), p.price, p.compareAtPrice, p.currency, sizesJson,
       p.available ? 1 : 0, ts, initial ? 1 : 0, ts, ts, p.position, JSON.stringify(p.colors), p.modelKey, p.colorLabel,
-      p.groupKey ?? null
+      p.groupKey ?? null, p.details ? JSON.stringify(p.details) : null
     )
     recordPrice(p.id, p.price, p.compareAtPrice, ts)
   } else {
@@ -497,7 +502,7 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
         updated_at = CASE WHEN ? THEN ? ELSE updated_at END,
         price_dropped_at = COALESCE(?, CASE WHEN ? > COALESCE(previous_price, price) * (1 - ?) THEN NULL ELSE price_dropped_at END),
         previous_price = COALESCE(?, CASE WHEN ? > COALESCE(previous_price, price) * (1 - ?) THEN NULL ELSE previous_price END),
-        colors = ?, model_key = ?, color_label = ?, group_key = ?,
+        colors = ?, model_key = ?, color_label = ?, group_key = ?, details = ?,
         new_color_at = COALESCE(?, new_color_at), new_color_name = COALESCE(?, new_color_name)
        WHERE id = ?`
     ).run(
@@ -505,7 +510,7 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
       JSON.stringify(p.images), p.price, p.compareAtPrice, p.currency, sizesJson, p.available ? 1 : 0, ts, p.position,
       priceChanged || existing.sizes !== sizesJson || !!existing.available !== p.available ? 1 : 0, ts,
       priceDroppedAt, p.price, MARKDOWN, previousPrice, p.price, MARKDOWN, JSON.stringify(p.colors), p.modelKey, p.colorLabel,
-      p.groupKey ?? null, newColor ? ts : null, newColor, p.id
+      p.groupKey ?? null, p.details ? JSON.stringify(p.details) : null, newColor ? ts : null, newColor, p.id
     )
   }
   // Size rows only need rewriting when the sizes changed. (If normalizeSize ever
@@ -867,7 +872,38 @@ export function getProduct(id: string): ProductDetail | null {
   const history = (db
     .prepare('SELECT price, compare_at_price, recorded_at FROM price_history WHERE product_id = ? ORDER BY recorded_at')
     .all(id) as any[]).map((h) => ({ price: conv(h.price)!, compareAtPrice: conv(h.compare_at_price), recordedAt: h.recorded_at }))
-  return { ...product, priceHistory: history, promotions: listPromotions(product.storeId), model: modelColourways(r) }
+  return {
+    ...product,
+    facts: factsOf(r),
+    pageRead: (r as any).page_details != null,
+    priceHistory: history,
+    promotions: listPromotions(product.storeId),
+    model: modelColourways(r)
+  }
+}
+
+const NO_FACTS: ProductFacts = { colour: null, composition: null, madeIn: null, sizeGuides: [] }
+
+/** The description's facts, with gaps filled from the product's page where it's been read. */
+function factsOf(r: any): ProductFacts {
+  const own: ProductFacts = r.details ? JSON.parse(r.details) : NO_FACTS
+  const page: Partial<ProductFacts> = r.page_details ? JSON.parse(r.page_details) : {}
+  return {
+    colour: own.colour ?? page.colour ?? null,
+    composition: own.composition ?? page.composition ?? null,
+    madeIn: own.madeIn ?? page.madeIn ?? null,
+    sizeGuides: own.sizeGuides ?? []
+  }
+}
+
+/** A product's title, page and facts, for reading its page. */
+export function factsSource(id: string): { title: string; url: string; facts: ProductFacts; pageRead: boolean } | null {
+  const r = db.prepare('SELECT title, url, details, page_details FROM products WHERE id = ?').get(id) as any
+  return r ? { title: r.title, url: r.url, facts: factsOf(r), pageRead: r.page_details != null } : null
+}
+
+export function savePageFacts(id: string, facts: Partial<ProductFacts>) {
+  db.prepare('UPDATE products SET page_details = ? WHERE id = ?').run(JSON.stringify(facts), id)
 }
 
 /**

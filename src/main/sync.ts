@@ -1,4 +1,3 @@
-import { load } from 'cheerio'
 import type { Gender, Size, Store, SyncStatus, SyncStoreResult } from '@shared/types'
 import { auralee } from './adapters/auralee'
 import { pageReading, takePendingReads } from './adapters/gentle'
@@ -10,6 +9,7 @@ import { woocommerce } from './adapters/woocommerce'
 import { type NewAlert, wishlistAlerts } from './alerts'
 import { brandResolver } from './brands'
 import { classifyCategory, classifyGender, isKids } from './classify'
+import { describe } from './details'
 import * as db from './db'
 import { PROFILE_VERSION, profileStore } from './profile'
 import { applyRules, groupKey } from './review'
@@ -57,26 +57,6 @@ function emit(patch: Partial<SyncStatus>) {
 export async function detectPlatform(base: string): Promise<Adapter> {
   for (const a of ADAPTERS) if (await a.detect(base)) return a
   return generic
-}
-
-export function htmlToText(html: string): string {
-  if (!html) return ''
-  const $ = load(html)
-  $('script, style, iframe').remove()
-  $('br').replaceWith('\n')
-  $('p, div, li, h1, h2, h3, h4, h5, h6, tr').each((_, el) => {
-    $(el).append('\n')
-  })
-  $('li').each((_, el) => {
-    $(el).prepend('• ')
-  })
-  return $.root()
-    .text()
-    .replace(/[ \t ]+/g, ' ')
-    .replace(/ *\n */g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/\n+• *\n*/g, '\n• ')
-    .trim()
 }
 
 async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cached' = 'defer'): Promise<SyncStoreResult> {
@@ -246,7 +226,11 @@ function foldRxSizes(sizes: Size[]): Size[] {
 }
 
 function toStored(store: Store, raw: RawProduct, id: string, currency: string, brand: string): Omit<db.StoredProductInput, 'position'> {
-  const description = htmlToText(raw.descriptionHtml)
+  const { base, colour } = modelOf(raw.title)
+  // The colour a piece comes in: its one colour option, else as its title names it
+  // ("Slip On – Black", "Rhein Pant in Black Nappa Leather").
+  const inColour = raw.title.match(/^\S+ \S+(?: \S+)*? in (\S.{1,40})$/)?.[1] ?? null
+  const { text: description, facts } = describe(raw.descriptionHtml, raw.colour ?? colour ?? inColour)
   const category = classifyCategory(
     raw.productType,
     raw.title,
@@ -260,7 +244,6 @@ function toStored(store: Store, raw: RawProduct, id: string, currency: string, b
     category,
     raw.collectionGender
   )
-  const { base, colour } = modelOf(raw.title)
   return {
     id,
     storeId: store.id,
@@ -281,6 +264,7 @@ function toStored(store: Store, raw: RawProduct, id: string, currency: string, b
     colors: raw.colors ?? [],
     modelKey: `${store.id}|${category}|${gender}|${base}`,
     colorLabel: colour,
+    details: facts,
     available: raw.available
   }
 }
