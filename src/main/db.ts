@@ -11,6 +11,7 @@ import type {
   ProductPage,
   ProductQuery,
   Promotion,
+  ReviewItem,
   Settings,
   Store,
   StoreGender
@@ -111,6 +112,13 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS review_items (
+  store_id INTEGER NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  group_key TEXT NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (store_id, id)
+);
 CREATE TABLE IF NOT EXISTS detail_cache (
   store TEXT NOT NULL,
   item TEXT NOT NULL,
@@ -163,6 +171,10 @@ export function openDb(file: string) {
   ensureColumn('favorites', 'size', 'TEXT')
   ensureColumn('stores', 'source', 'TEXT')
   ensureColumn('stores', 'profile', 'TEXT')
+  ensureColumn('stores', 'review', 'TEXT')
+  ensureColumn('stores', 'rules', 'TEXT')
+  ensureColumn('stores', 'new_groups', 'TEXT')
+  ensureColumn('products', 'group_key', 'TEXT')
   runOnce('reset-price-history-2026-09-27', () => {
     // Earlier versions recorded prices from mis-read catalogues; start the history
     // again from each product's current price.
@@ -284,6 +296,9 @@ function rowToStore(r: any): Store {
     scope: r.scope ?? null,
     source: r.source ?? null,
     profile: r.profile ? JSON.parse(r.profile) : null,
+    review: r.review ?? null,
+    rules: r.rules ? JSON.parse(r.rules) : null,
+    newGroups: r.new_groups ? JSON.parse(r.new_groups) : [],
     productCount: r.product_count ?? 0,
     createdAt: r.created_at
   }
@@ -298,15 +313,17 @@ export function getStore(id: number): Store | null {
   return r ? rowToStore(r) : null
 }
 
+/** New stores are held for review before anything reaches the feed. */
 export function insertStore(url: string, name: string, gender: StoreGender): Store {
-  const r = db.prepare('INSERT INTO stores (name, url, gender, created_at) VALUES (?, ?, ?, ?)').run(name, url, gender, now())
+  const r = db.prepare("INSERT INTO stores (name, url, gender, created_at, review) VALUES (?, ?, ?, ?, 'reading')").run(name, url, gender, now())
   return getStore(Number(r.lastInsertRowid))!
 }
 
 export function updateStore(id: number, patch: Record<string, unknown>) {
   const cols: Record<string, string> = {
     name: 'name', gender: 'gender', enabled: 'enabled', platform: 'platform',
-    currency: 'currency', lastSyncedAt: 'last_synced_at', lastError: 'last_error', scope: 'scope', source: 'source', profile: 'profile'
+    currency: 'currency', lastSyncedAt: 'last_synced_at', lastError: 'last_error', scope: 'scope', source: 'source', profile: 'profile',
+    review: 'review', rules: 'rules', newGroups: 'new_groups'
   }
   for (const [k, v] of Object.entries(patch)) {
     if (!cols[k] || v === undefined) continue
@@ -314,6 +331,89 @@ export function updateStore(id: number, patch: Record<string, unknown>) {
     db.prepare(`UPDATE stores SET ${cols[k]} = ? WHERE id = ?`).run(value as any, id)
   }
   return getStore(id)!
+}
+
+/**
+ * Empties a store and sends it back for review: its pieces (with their saved
+ * state and price history), its choices and anything held for review go.
+ */
+export function resetStore(id: number) {
+  transaction(() => {
+    db.prepare('DELETE FROM favorites WHERE product_id IN (SELECT id FROM products WHERE store_id = ?)').run(id)
+    db.prepare('DELETE FROM products WHERE store_id = ?').run(id)
+    db.prepare('DELETE FROM review_items WHERE store_id = ?').run(id)
+    db.prepare(
+      `UPDATE stores SET review = 'reading', rules = NULL, new_groups = NULL, profile = NULL, source = NULL,
+         last_synced_at = NULL, last_error = NULL WHERE id = ?`
+    ).run(id)
+  })
+}
+
+// ---------- review ----------
+
+export type ReviewInput = Omit<StoredProductInput, 'position'> & { groupKey: string }
+
+/** Replaces what's held for a store's review with a fresh read. */
+export function holdForReview(storeId: number, items: ReviewInput[]) {
+  transaction(() => {
+    db.prepare('DELETE FROM review_items WHERE store_id = ?').run(storeId)
+    const ins = db.prepare('INSERT OR IGNORE INTO review_items (store_id, id, group_key, data) VALUES (?, ?, ?, ?)')
+    for (const i of items) ins.run(storeId, i.id, i.groupKey, JSON.stringify(i))
+  })
+}
+
+/** Everything held for a store's review, in the store's own order. */
+export function heldForReview(storeId: number): ReviewInput[] {
+  return (db.prepare('SELECT data FROM review_items WHERE store_id = ? ORDER BY rowid').all(storeId) as { data: string }[]).map((r) => JSON.parse(r.data))
+}
+
+export function clearReview(storeId: number) {
+  db.prepare('DELETE FROM review_items WHERE store_id = ?').run(storeId)
+}
+
+const toReviewItem = (p: { id: string; title: string; images: string[]; price: number; currency: string; url: string }): ReviewItem => ({
+  id: p.id,
+  title: p.title,
+  image: p.images[0] ?? null,
+  price: p.price,
+  currency: p.currency,
+  url: p.url
+})
+
+/** Pieces in one group: held for review, or (for groups that appeared later) already in the feed. */
+export function reviewItems(storeId: number, key: string): ReviewItem[] {
+  const held = db.prepare('SELECT data FROM review_items WHERE store_id = ? AND group_key = ? ORDER BY rowid').all(storeId, key) as { data: string }[]
+  if (held.length) return held.map((r) => toReviewItem(JSON.parse(r.data)))
+  const rows = db
+    .prepare('SELECT id, title, images, price, currency, url FROM products WHERE store_id = ? AND group_key = ? AND removed_at IS NULL ORDER BY position')
+    .all(storeId, key) as any[]
+  return rows.map((r) => toReviewItem({ ...r, images: JSON.parse(r.images) }))
+}
+
+/** Counts of a store's pieces in the feed by group (for groups that appeared after review). */
+export function feedGroupCounts(storeId: number): Map<string, number> {
+  const rows = db
+    .prepare('SELECT group_key AS key, COUNT(*) AS n FROM products WHERE store_id = ? AND removed_at IS NULL AND group_key IS NOT NULL GROUP BY group_key')
+    .all(storeId) as { key: string; n: number }[]
+  return new Map(rows.map((r) => [r.key, r.n]))
+}
+
+/** Drops a store's pieces in the given groups from the feed entirely. Run inside a transaction. */
+export function deleteGroups(storeId: number, keys: string[]) {
+  for (const key of keys) {
+    db.prepare('DELETE FROM favorites WHERE product_id IN (SELECT id FROM products WHERE store_id = ? AND group_key = ?)').run(storeId, key)
+    db.prepare('DELETE FROM products WHERE store_id = ? AND group_key = ?').run(storeId, key)
+  }
+}
+
+/** Moves a group of a store's pieces in the feed to another gender and/or category. */
+export function relabelGroup(storeId: number, key: string, gender: string | null, category: string | null) {
+  db.prepare('UPDATE products SET gender = COALESCE(?, gender), category = COALESCE(?, category) WHERE store_id = ? AND group_key = ?').run(
+    gender,
+    category,
+    storeId,
+    key
+  )
 }
 
 export function deleteStore(id: number) {
@@ -347,6 +447,8 @@ export interface StoredProductInput {
   modelKey: string
   /** Colour named in the listing's title ("Slip On – Black" → "Black"), if any. */
   colorLabel: string | null
+  /** The review group the piece was sorted into (see groupKey), at reviewed stores. */
+  groupKey?: string | null
 }
 
 export function existingProducts(storeId: number) {
@@ -365,12 +467,13 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
     stmt(
       `INSERT INTO products (id, store_id, external_id, title, brand, description, url, product_type, tags, category, gender,
         images, price, compare_at_price, currency, sizes, available, first_seen_at, initial, last_seen_at, updated_at, position, colors,
-        model_key, color_label)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        model_key, color_label, group_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       p.id, p.storeId, p.externalId, p.title, p.brand, p.description, p.url, p.productType, JSON.stringify(p.tags),
       p.category, p.gender, JSON.stringify(p.images), p.price, p.compareAtPrice, p.currency, sizesJson,
-      p.available ? 1 : 0, ts, initial ? 1 : 0, ts, ts, p.position, JSON.stringify(p.colors), p.modelKey, p.colorLabel
+      p.available ? 1 : 0, ts, initial ? 1 : 0, ts, ts, p.position, JSON.stringify(p.colors), p.modelKey, p.colorLabel,
+      p.groupKey ?? null
     )
     recordPrice(p.id, p.price, p.compareAtPrice, ts)
   } else {
@@ -394,7 +497,7 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
         updated_at = CASE WHEN ? THEN ? ELSE updated_at END,
         price_dropped_at = COALESCE(?, CASE WHEN ? > COALESCE(previous_price, price) * (1 - ?) THEN NULL ELSE price_dropped_at END),
         previous_price = COALESCE(?, CASE WHEN ? > COALESCE(previous_price, price) * (1 - ?) THEN NULL ELSE previous_price END),
-        colors = ?, model_key = ?, color_label = ?,
+        colors = ?, model_key = ?, color_label = ?, group_key = ?,
         new_color_at = COALESCE(?, new_color_at), new_color_name = COALESCE(?, new_color_name)
        WHERE id = ?`
     ).run(
@@ -402,7 +505,7 @@ export function upsertProduct(p: StoredProductInput, initial: boolean, existing:
       JSON.stringify(p.images), p.price, p.compareAtPrice, p.currency, sizesJson, p.available ? 1 : 0, ts, p.position,
       priceChanged || existing.sizes !== sizesJson || !!existing.available !== p.available ? 1 : 0, ts,
       priceDroppedAt, p.price, MARKDOWN, previousPrice, p.price, MARKDOWN, JSON.stringify(p.colors), p.modelKey, p.colorLabel,
-      newColor ? ts : null, newColor, p.id
+      p.groupKey ?? null, newColor ? ts : null, newColor, p.id
     )
   }
   // Size rows only need rewriting when the sizes changed. (If normalizeSize ever
@@ -613,7 +716,8 @@ function baseWhere(settings: Settings, wishlist = false): Where {
   }
   if (settings.gender !== 'all' && !wishlist) {
     const genders = [settings.gender, 'unisex', ...(settings.includeUnknownGender ? ['unknown'] : [])]
-    w.sql.push(`p.gender IN (${genders.map(() => '?').join(',')})`)
+    // At a reviewed store, what's in the feed is what the user chose to keep.
+    w.sql.push(`(s.rules IS NOT NULL OR p.gender IN (${genders.map(() => '?').join(',')}))`)
     w.params.push(...genders)
   }
   if (settings.onlyMySizes && settings.mySizes.length && !wishlist) {

@@ -12,6 +12,7 @@ import { brandResolver } from './brands'
 import { classifyCategory, classifyGender, isKids } from './classify'
 import * as db from './db'
 import { PROFILE_VERSION, profileStore } from './profile'
+import { applyRules, groupKey } from './review'
 import { mapLimit } from './http'
 import { refreshRates } from './currency'
 import { detectPromotions } from './promotions'
@@ -100,8 +101,7 @@ async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cac
     const storeAlerts: NewAlert[] = []
 
     // Classify everything first so the store's overall mix can inform unlabelled items.
-    const forSale = fetched.products.filter((raw) => !notForSale(raw))
-    const products = forSale.filter(
+    const listed = fetched.products.filter(
       (raw) =>
         !NOT_A_PRODUCT.test(`${raw.productType} ${raw.title}`) &&
         // Listings without a single photo are placeholders or spare parts.
@@ -110,6 +110,9 @@ async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cac
         !raw.kids &&
         !isKids(raw.title, raw.productType, raw.tags.join(' '), urlPath(raw.url))
     )
+    // Lookbook pages and placeholders are only offered at review, in a group of their own.
+    const products = listed.filter((raw) => !notForSale(raw))
+    const lookbook = listed.filter(notForSale)
     // A store moved to another reader may identify products differently; the same
     // web address is the same product, so it keeps its history and saved state.
     const byUrl = new Map([...existing.values()].map((r) => [r.url as string, r.external_id as string]))
@@ -127,14 +130,33 @@ async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cac
     // The store's own structure settles what the products' words leave open (see profile.ts).
     const rawById = new Map(products.map((r) => [`${store.id}:${r.externalId}`, r]))
     const items = [...byId.entries()].map(([id, p]) => ({ p, gender: p.gender as Gender, category: p.category, section: rawById.get(id)!.collectionGender, title: p.title, model: pieceOf(p.title) }))
-    const profile = profileStore(items, fetched.products.length - forSale.length)
+    const profile = profileStore(items, lookbook.length)
     for (const i of items) i.p.gender = i.gender
     const storeGender = profile.storeGender
     db.updateStore(store.id, { gender: storeGender ?? 'mixed' })
+    const grouped: db.ReviewInput[] = [...byId.values()].map((p) => ({ ...p, groupKey: groupKey(p.gender as Gender, p.category) }))
+    for (const raw of lookbook) {
+      const id = `${store.id}:${raw.externalId}`
+      if (!byId.has(id)) grouped.push({ ...toStored(store, raw, id, currency, brandOf(raw.brand)), groupKey: groupKey('notForSale', '') })
+    }
 
-    // Only keep the user's department: drop items that belong to the other one.
-    const unwanted = settings.gender === 'men' ? 'women' : settings.gender === 'women' ? 'men' : null
-    const wanted = [...byId.values()].filter((p) => p.gender !== unwanted)
+    // A new store's first read is held for the user to review; nothing reaches the feed yet.
+    if (store.review) {
+      db.holdForReview(store.id, grouped)
+      db.updateStore(store.id, { review: 'ready', lastSyncedAt: new Date().toISOString(), lastError: null, currency, scope: settings.gender, source: fetched.source ?? null, profile })
+      return result
+    }
+
+    // A reviewed store keeps what the user chose; others keep the user's department.
+    let wanted: db.ReviewInput[]
+    if (store.rules) {
+      const applied = applyRules(grouped, store.rules, settings)
+      wanted = applied.kept
+      db.updateStore(store.id, { newGroups: applied.newGroups })
+    } else {
+      const unwanted = settings.gender === 'men' ? 'women' : settings.gender === 'women' ? 'men' : null
+      wanted = grouped.filter((p) => !p.groupKey.startsWith('notForSale') && p.gender !== unwanted)
+    }
     const seen = new Set<string>()
 
     db.transaction(() => {
@@ -294,7 +316,10 @@ export async function runSync(storeId?: number, only?: Set<number>, pages: 'defe
     else if (queued !== null) (queued ??= new Set()).add(storeId)
     return
   }
-  const stores = db.listStores().filter((s) => s.enabled && (storeId == null || s.id === storeId) && (!only || only.has(s.id)))
+  // A store waiting for review has been read; it isn't read again until the user saves.
+  const stores = db
+    .listStores()
+    .filter((s) => s.enabled && s.review !== 'ready' && (storeId == null || s.id === storeId) && (!only || only.has(s.id)))
   if (!stores.length) return
   emit({ running: true, completed: 0, total: stores.length, currentStore: stores[0].name, results: [] })
   await refreshRates()

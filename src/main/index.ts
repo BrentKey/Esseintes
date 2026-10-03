@@ -3,13 +3,14 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron'
 import { load } from 'cheerio'
-import type { ImportResult, ProductQuery, Settings } from '@shared/types'
+import type { ImportResult, ProductQuery, Settings, StoreRules } from '@shared/types'
 import type { NewAlert } from './alerts'
 import * as db from './db'
 import { baseUrl, fetchText } from './http'
 import { cleanStoreName } from './brands'
 import { refreshRates } from './currency'
 import { parseStoreList } from './storelist'
+import * as review from './review'
 import * as sync from './sync'
 
 let win: BrowserWindow | null = null
@@ -184,6 +185,13 @@ function registerIpc() {
   ipcMain.handle('products:favorite', (_e, id: string) => db.toggleFavorite(id))
   ipcMain.handle('products:save-favorite', (_e, id: string, size: string | null) => db.saveFavorite(id, size))
   ipcMain.handle('home:get', () => db.getHome(previousVisit))
+  ipcMain.handle('review:get', (_e, storeId: number) => review.getReview(storeId))
+  ipcMain.handle('review:items', (_e, storeId: number, key: string) => db.reviewItems(storeId, key))
+  ipcMain.handle('review:save', (_e, storeId: number, rules: StoreRules) => review.saveReview(storeId, rules))
+  ipcMain.handle('stores:start-over', (_e, storeId: number) => {
+    db.resetStore(storeId)
+    void sync.runSync(storeId)
+  })
   ipcMain.handle('alerts:list', () => db.listAlerts())
   ipcMain.handle('currencies:list', () => db.availableCurrencies())
   ipcMain.handle('alerts:read', () => db.markAlertsRead())

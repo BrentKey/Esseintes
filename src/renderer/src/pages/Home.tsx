@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Alert, HomeData } from '@shared/types'
 import { ProductCard, ProductGrid } from '../components/ProductCard'
+import { ReviewNotice } from '../components/ReviewNotice'
 import { useData, useLiveVersion, useSync } from '../data'
 import { api, sized, timeAgo } from '../lib'
 import { useNav } from '../nav'
@@ -27,6 +28,7 @@ export function Home() {
   if (empty) {
     return (
       <div className="page empty-state">
+        <ReviewNotice />
         <h1 className="display">{sync.running ? 'Sending for the latest pieces…' : data.stores.length ? 'Nothing meets the standard' : 'An empty study'}</h1>
         <p className="muted">
           {sync.running
@@ -46,6 +48,7 @@ export function Home() {
 
   return (
     <div className="page home">
+      <ReviewNotice />
       <section className="hero">
         <div className="hero-copy">
           <div className="eyebrow">{data.newSinceLastVisit > 0 ? 'Since your last visit' : 'Latest'}</div>

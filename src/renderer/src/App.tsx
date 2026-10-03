@@ -9,6 +9,7 @@ import { Onboarding } from './pages/Onboarding'
 import { Product } from './pages/Product'
 import { Settings as SettingsPage } from './pages/Settings'
 import { Shop } from './pages/Shop'
+import { Review } from './pages/Review'
 import { Stores } from './pages/Stores'
 
 interface Entry {
@@ -180,6 +181,8 @@ function View({ route }: { route: Route }) {
       return <Product id={route.id} />
     case 'stores':
       return <Stores />
+    case 'review':
+      return <Review storeId={route.storeId} />
     case 'settings':
       return <SettingsPage />
   }

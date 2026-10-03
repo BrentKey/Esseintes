@@ -33,8 +33,73 @@ export interface Store {
   source: string | null
   /** How the last sync decided men's and women's at this store. */
   profile: StoreProfile | null
+  /**
+   * A new (or started-over) store is read in full and held for review before
+   * anything reaches the feed: 'reading' until the first read finishes, then
+   * 'ready' until the user saves their choices. Null once reviewed.
+   */
+  review: 'reading' | 'ready' | null
+  /** The user's choices from reviewing the store; null for stores added before reviews. */
+  rules: StoreRules | null
+  /** Groups that appeared after the review, kept for now and awaiting a decision. */
+  newGroups: NewGroup[]
   productCount: number
   createdAt: string
+}
+
+/** How a group of a store's pieces was labelled: by gender, or as not for sale (lookbooks). */
+export type GroupLabel = Gender | 'notForSale'
+
+/** What to do with a group: leave it out, keep it as labelled, or keep it under another label. */
+export type ReviewChoice = 'skip' | 'keep' | 'men' | 'women' | 'unisex'
+
+export interface GroupRule {
+  choice: ReviewChoice
+  /** Files the group under another category ("Other" → "Bags"). */
+  category?: string
+}
+
+/** A store's reviewed groups, keyed "label|category" (see groupKey). */
+export interface StoreRules {
+  groups: Record<string, GroupRule>
+}
+
+export interface NewGroup {
+  key: string
+  count: number
+}
+
+export interface ReviewItem {
+  id: string
+  title: string
+  image: string | null
+  price: number
+  currency: string
+  url: string
+}
+
+export interface ReviewGroup {
+  key: string
+  label: GroupLabel
+  category: string
+  count: number
+  /** The choice the group starts with: the saved one, else the default for its label. */
+  choice: ReviewChoice
+  moveTo: string | null
+  samples: ReviewItem[]
+}
+
+export interface StoreReview {
+  store: Store
+  /** 'initial': the first review of everything read; 'new': groups that appeared since. */
+  mode: 'initial' | 'new'
+  total: number
+  groups: ReviewGroup[]
+}
+
+/** The key of a group of pieces: how they're labelled and which category they're in. */
+export function groupKey(label: GroupLabel, category: string): string {
+  return label === 'notForSale' ? 'notForSale|' : `${label}|${category}`
 }
 
 /**
@@ -257,6 +322,10 @@ export interface Api {
   queryProducts(q: ProductQuery): Promise<ProductPage>
   getProduct(id: string): Promise<ProductDetail | null>
   getHome(): Promise<HomeData>
+  getReview(storeId: number): Promise<StoreReview>
+  getReviewItems(storeId: number, key: string): Promise<ReviewItem[]>
+  saveReview(storeId: number, rules: StoreRules): Promise<void>
+  startOver(storeId: number): Promise<void>
   toggleFavorite(id: string): Promise<boolean>
   saveFavorite(id: string, size: string | null): Promise<void>
   sync(storeId?: number): Promise<void>

@@ -6,6 +6,7 @@ export type Route =
   | { page: 'shop'; title: string; query: ProductQuery; subtitle?: string }
   | { page: 'product'; id: string }
   | { page: 'stores' }
+  | { page: 'review'; storeId: number }
   | { page: 'settings' }
 
 export interface Nav {

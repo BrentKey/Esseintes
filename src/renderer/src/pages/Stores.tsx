@@ -3,6 +3,7 @@ import type { Store } from '@shared/types'
 import { useData, useLiveVersion, useSync } from '../data'
 import { api, timeAgo } from '../lib'
 import { useNav } from '../nav'
+import { ReviewNotice } from '../components/ReviewNotice'
 
 const PLATFORM_LABEL: Record<string, string> = { shopify: 'Shopify', woocommerce: 'WooCommerce', depict: 'Centra (Depict)', auralee: 'Auralee (gentle)', generic: 'Generic (sitemap)' }
 
@@ -28,10 +29,11 @@ export function Stores() {
       <h1 className="display">Stores</h1>
       <p className="muted">
         Add any online store. Shopify and WooCommerce stores are read in full through their public product feeds; other sites are read from
-        their sitemap and product pages.
+        their sitemap and product pages. Each new store is read first, then you choose what to keep before anything reaches your feed.
       </p>
 
       <AddStore onAdded={refresh} />
+      <ReviewNotice />
 
       <div className="store-tools">
         <button
@@ -85,8 +87,31 @@ export function Stores() {
                   />
                   Show
                 </label>
-                <button className="btn btn-small btn-outline" disabled={sync.running} onClick={() => api.sync(s.id)}>
-                  Refresh
+                {s.review === 'ready' ? (
+                  <button className="btn btn-small" onClick={() => go({ page: 'review', storeId: s.id })}>
+                    Review
+                  </button>
+                ) : (
+                  <button className="btn btn-small btn-outline" disabled={sync.running} onClick={() => api.sync(s.id)}>
+                    {s.review === 'reading' ? (sync.running ? 'Reading…' : 'Read again') : 'Refresh'}
+                  </button>
+                )}
+                <button
+                  className="btn btn-small btn-ghost"
+                  disabled={s.review === 'reading' && sync.running}
+                  title="Delete this store’s pieces and read it again, to choose what to keep"
+                  onClick={async () => {
+                    if (
+                      confirm(
+                        `Start over with ${s.name}?\n\nAll of its pieces are deleted (including any you saved, and their price history) and the store is read again. You’ll then choose what to keep, as when it was first added.`
+                      )
+                    ) {
+                      await api.startOver(s.id)
+                      refresh()
+                    }
+                  }}
+                >
+                  Start over
                 </button>
                 <button
                   className="btn btn-small btn-ghost"
