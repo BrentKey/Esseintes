@@ -126,7 +126,7 @@ async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cac
     }
     // The store's own structure settles what the products' words leave open (see profile.ts).
     const rawById = new Map(products.map((r) => [`${store.id}:${r.externalId}`, r]))
-    const items = [...byId.entries()].map(([id, p]) => ({ p, gender: p.gender as Gender, category: p.category, section: rawById.get(id)!.collectionGender }))
+    const items = [...byId.entries()].map(([id, p]) => ({ p, gender: p.gender as Gender, category: p.category, section: rawById.get(id)!.collectionGender, title: p.title, model: pieceOf(p.title) }))
     const profile = profileStore(items, fetched.products.length - forSale.length)
     for (const i of items) i.p.gender = i.gender
     const storeGender = profile.storeGender
@@ -199,6 +199,18 @@ export function modelOf(title: string): { base: string; colour: string | null } 
   const m = t.match(COLOUR_SUFFIX)
   const base = (m ? m[1] : t).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
   return { base, colour: m ? m[2].trim() : null }
+}
+
+/**
+ * The piece a title names when the title also names a colour: "Rhein Pant in
+ * Black Nappa Leather" and "Solid Track Pant - Midnight" give "rhein pant" and
+ * "solid track pant". Titles without a colour give '' (they aren't colourways).
+ */
+function pieceOf(title: string): string {
+  const { base, colour } = modelOf(title)
+  if (colour) return base
+  const m = base.match(/^(\S+ \S+(?: \S+)*?) in \S/)
+  return m ? m[1] : ''
 }
 
 /** Folds "54-17RX"-style prescription duplicates into the plain size. */

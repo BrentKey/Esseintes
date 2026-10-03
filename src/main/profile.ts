@@ -2,7 +2,7 @@ import { departmentOf } from '@shared/categories'
 import type { Gender, StoreProfile } from '@shared/types'
 
 /** Bump when the rules below change, so the next sync may retire what the old ones kept. */
-export const PROFILE_VERSION = 1
+export const PROFILE_VERSION = 2
 
 // A store "has" men's or women's sections once they hold this many items; fewer
 // is a gift guide or a one-off edit, not a department.
@@ -14,6 +14,9 @@ export interface ProfileItem {
   category: string
   /** Which of the store's men's/women's sections the item was found in. */
   section: Gender | null
+  title: string
+  /** The piece without its colour ("rhein flare pant"), shared by its other colourways; '' when the title names no colour. */
+  model: string
 }
 
 /**
@@ -26,6 +29,9 @@ export interface ProfileItem {
  *    is signalling that the clothing and shoes left outside it are womenswear.
  *    Items outside every section otherwise stay unlabelled: at stores divided
  *    both ways they're usually unisex (eyewear, accessories, home goods).
+ *    An unlabelled piece whose other colourways all sit in the same side's
+ *    sections is that side's too ("Rhein Flare Pant in Burnt Sienna Suede"
+ *    when the Ivory one is under Women › Pants).
  * 2. A store whose labelled items are almost all one gender sells to that
  *    gender; its unlabelled items follow.
  * 3. Otherwise only each product's own words, which are already applied.
@@ -42,6 +48,18 @@ export function profileStore(items: ProfileItem[], notForSale: number): StorePro
   const hasWomen = inWomen + inBoth >= MIN_SECTION_ITEMS
 
   const menDepartments = hasMen && inWomen + inBoth === 0 && (inMen + inBoth) / Math.max(1, items.length) >= 0.85 ? ['Clothing', 'Shoes'] : []
+  // What the store's sections say about each piece, across its colourways.
+  // Only true colourways count: a store listing the same name twice ("AuraLite
+  // T-Shirt" in its men's and women's lines) has two pieces, not two colours.
+  const byModel = new Map<string, ProfileItem[]>()
+  for (const i of items) if (i.model) (byModel.get(i.model) ?? byModel.set(i.model, []).get(i.model)!).push(i)
+  for (const i of items) {
+    if (i.gender !== 'unknown' || i.section || !i.model) continue
+    const siblings = byModel.get(i.model)!.filter((o) => o !== i)
+    if (siblings.some((o) => o.title === i.title)) continue
+    const side = new Set(siblings.map((o) => o.section).filter((g): g is Gender => !!g))
+    if (side.size === 1 && !side.has('unisex')) i.gender = [...side][0]
+  }
   for (const i of items)
     if (i.gender === 'unknown' && !i.section && menDepartments.includes(departmentOf(i.category))) i.gender = 'women'
 
