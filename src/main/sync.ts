@@ -3,6 +3,7 @@ import { adss } from './adapters/adss'
 import { auralee } from './adapters/auralee'
 import { pageReading, takePendingReads } from './adapters/gentle'
 import { depict } from './adapters/depict'
+import { ebisumart } from './adapters/ebisumart'
 import { generic } from './adapters/generic'
 import { shopify } from './adapters/shopify'
 import type { Adapter, RawProduct } from './adapters/types'
@@ -18,7 +19,7 @@ import { mapLimit } from './http'
 import { refreshRates } from './currency'
 import { detectPromotions } from './promotions'
 
-const ADAPTERS: Adapter[] = [auralee, shopify, woocommerce, depict, adss, generic]
+const ADAPTERS: Adapter[] = [auralee, shopify, woocommerce, depict, adss, ebisumart, generic]
 // Different stores are read side by side; each store's own pace is unchanged.
 const STORE_CONCURRENCY = 5
 const PAGE_READ_CONCURRENCY = 3

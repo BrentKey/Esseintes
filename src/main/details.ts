@@ -14,6 +14,20 @@ const PERCENT_FIBRE = new RegExp(
   `\\d{1,3}(?:[.,]\\d+)?\\s?%\\s*(?:[a-z-]+\\s+){0,2}(${FIBRES})\\b|\\b(${FIBRES})\\s*\\d{1,3}(?:[.,]\\d+)?\\s?%`,
   'i'
 )
+// Japanese stores write the fibre first: "麻 100%", "綿 70% ナイロン 30%".
+const JP_FIBRES = '綿|麻|毛|絹|ウール|コットン|リネン|シルク|カシミヤ|カシミア|ナイロン|ポリエステル|レーヨン|アクリル|ポリウレタン|キュプラ|モヘア|アルパカ|ヘンプ|テンセル|リヨセル|指定外繊維|牛革|豚革|羊革|山羊革|レザー|本革'
+const JP_FIBRE_PERCENT = new RegExp(`(${JP_FIBRES})(\\s*[（(][^)）]*[)）])?\\s*\\d{1,3}\\s?[%％]`)
+const JP_FIBRE_NAMES: Record<string, string> = {
+  綿: 'Cotton', コットン: 'Cotton', 麻: 'Linen', リネン: 'Linen', ヘンプ: 'Hemp', 毛: 'Wool', ウール: 'Wool', 絹: 'Silk', シルク: 'Silk',
+  カシミヤ: 'Cashmere', カシミア: 'Cashmere', ナイロン: 'Nylon', ポリエステル: 'Polyester', レーヨン: 'Rayon', アクリル: 'Acrylic',
+  ポリウレタン: 'Polyurethane', キュプラ: 'Cupro', モヘア: 'Mohair', アルパカ: 'Alpaca', テンセル: 'Tencel', リヨセル: 'Lyocell',
+  指定外繊維: 'Other fibre', 牛革: 'Cowhide', 豚革: 'Pigskin', 羊革: 'Sheepskin', 山羊革: 'Goatskin', レザー: 'Leather', 本革: 'Leather',
+  表地: 'Shell', 裏地: 'Lining', 素材: 'Material'
+}
+/** Fibre names in a Japanese composition line, in English ("麻 100%" → "Linen 100%"). */
+const englishFibres = (s: string) =>
+  s.replace(new RegExp(Object.keys(JP_FIBRE_NAMES).sort((a, b) => b.length - a.length).join('|'), 'g'), (w) => JP_FIBRE_NAMES[w]).replace(/％/g, '%').replace(/：/g, ': ')
+
 const COMPOSITION_LABEL = /^(?:composition|fabric(?:ation)?|materials?|content|shell|outer|main|body|lining|fibre|fiber)\b(?:\s*(?:&|and)\s*care)?\s*[:\-–：|]\s*/i
 const COLOUR_LABEL = /^colou?r(?:way)?s?\s*[:\-–]\s*/i
 const COUNTRIES =
@@ -125,10 +139,10 @@ function factsFromLines(lines: string[], taken = new Set<number>()): Omit<Produc
       taken.add(i)
       continue
     }
-    const labelled = COMPOSITION_LABEL.test(line) && (FIBRE.test(line) || /%/.test(line))
+    const labelled = (COMPOSITION_LABEL.test(line) || /^(素材|組成|表地|裏地)\s*[:：]?/.test(line)) && (FIBRE.test(line) || /[%％]/.test(line))
     // Composition is one line or a run of consecutive ones (shell, lining, trims).
     const continues = composition.length === 0 || i === lastComposition + 1
-    if ((labelled || PERCENT_FIBRE.test(line)) && continues && composition.length < 3) {
+    if ((labelled || PERCENT_FIBRE.test(line) || JP_FIBRE_PERCENT.test(line)) && continues && composition.length < 3) {
       const value = labelled && /^(composition|fabric(?:ation)?|materials?|content|fibre|fiber)\b/i.test(line) ? line.replace(COMPOSITION_LABEL, '') : line
       // Pages often repeat a block (desktop and mobile layouts).
       if (!composition.some((c) => c.toLowerCase() === value.toLowerCase())) composition.push(value)
@@ -142,7 +156,7 @@ function factsFromLines(lines: string[], taken = new Set<number>()): Omit<Produc
       if (m) madeIn = titleCase(m[1])
     }
   }
-  composition = composition.map((c) => c.replace(/[.;]\s*$/, ''))
+  composition = composition.map((c) => englishFibres(c).replace(/[.;]\s*$/, ''))
   return { colour, composition: composition.length ? composition.join('; ') : null, madeIn }
 }
 

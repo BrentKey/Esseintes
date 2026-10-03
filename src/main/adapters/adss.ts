@@ -1,4 +1,5 @@
-import { fetchJson, sleep, tryFetchJson } from '../http'
+import { collectionGender } from '../classify'
+import { fetchJson, fetchText, sleep, tryFetchJson } from '../http'
 import type { Adapter, FetchResult, RawProduct } from './types'
 
 // ADSS, a Japanese shop system (Kaptain Sunshine). Its listing pages fill
@@ -10,6 +11,9 @@ interface AdssDoc {
   cd: string
   bd: string
   ml?: string
+  sp?: string[]
+  cn2?: string[]
+  cf1?: string[]
   name: string
   bdName?: string
   price: number
@@ -75,14 +79,27 @@ function tidyMaterial(m: string): string {
 
 const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+/** "shoulderWidth" → "Shoulder width", for measurements without a known name. */
+const humanize = (key: string) => {
+  const words = key.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
 /** The store's material, care notes and measurements as description HTML (see details.ts). */
 function descriptionOf(d: AdssDoc): string {
   const parts: string[] = []
   for (const m of d.material ?? []) parts.push(`<p>Composition: ${escape(tidyMaterial(m))}</p>`)
   const sizes = d.vcaName ?? []
-  const rows = MEASURES.map(([key, label]) => [label, d[key]] as const).filter(
-    (r): r is readonly [string, string[]] => Array.isArray(r[1]) && r[1].length === sizes.length && sizes.length > 0
-  )
+  // Any field with one "…cm" value per size is a measurement; known ones first, in size-guide order.
+  const known = new Map(MEASURES)
+  const keys = [
+    ...MEASURES.map(([k]) => k),
+    ...Object.keys(d).filter((k) => !known.has(k))
+  ].filter((k) => {
+    const v = d[k]
+    return Array.isArray(v) && sizes.length > 0 && v.length === sizes.length && v.every((x) => /\d\s*(cm|mm)$/i.test(String(x)))
+  })
+  const rows = keys.map((k) => [known.get(k) ?? humanize(k), d[k] as string[]] as const)
   if (rows.length) {
     parts.push(
       `<table><tr><td>Measurements:</td>${sizes.map((s) => `<td>${escape(s)}</td>`).join('')}</tr>${rows
@@ -94,8 +111,12 @@ function descriptionOf(d: AdssDoc): string {
   return parts.join('')
 }
 
-function toRaw(base: string, d: AdssDoc): RawProduct {
-  const img = (file: string) => `https://itemimg-${(d.ml ?? 'kps').toLowerCase()}.adss-sys.com/itemimg/${d.bd}/${d.cd}/${file}`
+function toRaw(base: string, d: AdssDoc, imageHost: string | null): RawProduct {
+  const shop = d.ml ?? d.sp?.[0]
+  const host = shop ? `itemimg-${shop.toLowerCase()}.adss-sys.com` : imageHost
+  const img = (file: string) => `https://${host}/itemimg/${d.bd}/${d.cd}/${file}`
+  // Shops selling to both sides name the department in their categories ("MEN", "WOMEN").
+  const departments = [...(d.cn1 ?? []), ...(d.cn2 ?? []), ...(d.cf1 ?? [])].join(' ').replace(/\b[A-Z]+__/g, '')
   const available = (d.stnum ?? 0) > 0
   const colourNames = d.vcbName ?? []
   const colors =
@@ -124,7 +145,7 @@ function toRaw(base: string, d: AdssDoc): RawProduct {
     colors,
     colour: colourNames.length === 1 ? colourNames[0] : null,
     available,
-    collectionGender: null
+    collectionGender: collectionGender('', departments)
   }
 }
 
@@ -151,6 +172,15 @@ export const adss: Adapter = {
       }
       await sleep(1000)
     }
-    return { products: docs.map((d) => toRaw(base, d)), currency: 'JPY', complete }
+    // Photos live on the shop's own image server, named in its listing page template.
+    let imageHost: string | null = null
+    if (docs.some((d) => !d.ml && !d.sp?.length)) {
+      try {
+        imageHost = (await fetchText(`${base}/ap/s/s`)).match(/(itemimg-[a-z0-9]+\.adss-sys\.com)/i)?.[1] ?? null
+      } catch {
+        /* photos unknown */
+      }
+    }
+    return { products: docs.map((d) => toRaw(base, d, imageHost)), currency: 'JPY', complete }
   }
 }
