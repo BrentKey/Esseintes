@@ -9,7 +9,7 @@ import { woocommerce } from './adapters/woocommerce'
 import { type NewAlert, wishlistAlerts } from './alerts'
 import { brandResolver } from './brands'
 import { classifyCategory, classifyGender, isKids } from './classify'
-import { describe } from './details'
+import { colourName, describe } from './details'
 import * as db from './db'
 import { PROFILE_VERSION, profileStore } from './profile'
 import { applyRules, groupKey } from './review'
@@ -228,9 +228,9 @@ function foldRxSizes(sizes: Size[]): Size[] {
 function toStored(store: Store, raw: RawProduct, id: string, currency: string, brand: string): Omit<db.StoredProductInput, 'position'> {
   const { base, colour } = modelOf(raw.title)
   // The colour a piece comes in: its one colour option, else as its title names it
-  // ("Slip On – Black", "Rhein Pant in Black Nappa Leather").
+  // ("Slip On – Black", "Macca Shirt in Old Rose"), when those words are only a colour.
   const inColour = raw.title.match(/^\S+ \S+(?: \S+)*? in (\S.{1,40})$/)?.[1] ?? null
-  const { text: description, facts } = describe(raw.descriptionHtml, raw.colour ?? colour ?? inColour)
+  const { text: description, facts } = describe(raw.descriptionHtml, raw.colour ?? colourName(colour) ?? colourName(inColour))
   const category = classifyCategory(
     raw.productType,
     raw.title,

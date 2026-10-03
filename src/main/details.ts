@@ -20,6 +20,28 @@ const COUNTRIES =
   'italy|portugal|japan|france|england|scotland|ireland|wales|britain|great britain|the uk|uk|the usa|usa|the united states|united states|america|spain|germany|india|china|peru|bolivia|romania|turkey|türkiye|morocco|tunisia|mongolia|nepal|vietnam|thailand|korea|south korea|taiwan|mexico|canada|australia|new zealand|sweden|denmark|norway|finland|poland|lithuania|bulgaria|hungary|austria|switzerland|belgium|the netherlands|netherlands|greece|indonesia|sri lanka|bangladesh|pakistan|cambodia|madagascar|guatemala|colombia|ecuador|brazil|argentina|uruguay|chile'
 const MADE_IN = new RegExp(`\\b(?:made|handmade|crafted|manufactured|produced|knitted|woven|sewn)\\s+in\\s+(${COUNTRIES})\\b`, 'i')
 
+// Words that name a colour, for telling "in Old Rose" (a colour) from "in Wool Drill" (a fabric).
+const COLOUR_WORDS =
+  'black|white|ivory|ecru|cream|off-white|natural|ecru|bone|stone|sand|beige|camel|tan|khaki|taupe|brown|chocolate|coffee|mocha|espresso|walnut|chestnut|cognac|caramel|tobacco|rust|terracotta|burgundy|bordeaux|wine|oxblood|maroon|red|rouge|scarlet|crimson|cherry|raspberry|pink|rose|blush|salmon|coral|peach|apricot|orange|amber|mustard|ochre|gold|golden|yellow|lemon|butter|lime|olive|green|sage|mint|moss|forest|bottle|emerald|jade|teal|turquoise|aqua|petrol|blue|navy|indigo|cobalt|azure|sky|denim|midnight|ink|royal|cornflower|powder|slate|steel|grey|gray|charcoal|graphite|anthracite|silver|smoke|ash|pewter|purple|violet|lilac|lavender|mauve|plum|aubergine|fuchsia|magenta|multi|multicolou?r|melange|marl|heather|ombre|tortoise|havana|honey|nude|oat|oatmeal|biscuit|fawn|mushroom|putty|chalk|snow|milk|vanilla|sepia|umber|sienna|henna|madder|saffron|turmeric|mango|tangerine|pumpkin|brick|clay|earth|dune|desert|army|military|hunter|pine|fern|pistachio|celadon|seafoam|ocean|marine|sea|storm|dusk|dusky|dark|light|pale|deep|washed|faded|bright|stripes?|check'
+const COLOUR_WORD = new RegExp(`\\b(${COLOUR_WORDS})\\b`, 'i')
+// Fabrics, weaves and materials: a title's "in …" naming one of these isn't (only) a colour.
+const MATERIAL = new RegExp(
+  `\\b(${FIBRES}|drill|twill|jacquard|knit|knitted|ribbed|rib|blend|padded|quilted|fabric|leather|nappa|crochet|boucle|bouclé|seersucker|poplin|popeline|oxford|chambray|velvet|velour|terry|towelling|jersey|fleece|felt|gabardine|serge|crepe|satin|organza|tulle|mesh|lace|loden|moleskin|cord|herringbone|houndstooth|tweed|melton|piqué|pique|stone|lava|wood|horn|resin|enamel|ceramic|glass|paper|straw|raffia|wicker)\\b`,
+  'i'
+)
+
+/**
+ * Whether words a store uses for a piece's variant ("Old Rose", "Black") can be
+ * shown as its colour: they must name a colour and nothing else ("Wool Drill"
+ * and "Black Nappa Leather" are fabrics). Without a colour word they're left out,
+ * since no colour beats a wrong one.
+ */
+export function colourName(words: string | null | undefined): string | null {
+  const w = words?.trim()
+  if (!w || w.length > 40) return null
+  return COLOUR_WORD.test(w) && !MATERIAL.test(w) ? w : null
+}
+
 const SIZE_WORD = /^(xxs|xs|s|m|l|xl|xxl|xxxl|2xl|3xl|one size|os|\d{1,2}(?:[.,]5)?|\d{2,3}\s?cm)$/i
 
 /** Plain text from a store's description HTML, one line per paragraph or list item. */
