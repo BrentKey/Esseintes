@@ -1,5 +1,6 @@
 import type { Colorway, Gender, Size } from '@shared/types'
 import { load } from 'cheerio'
+import type { AnyNode, Element } from 'domhandler'
 import { collectionCategory, collectionGender, isKids, isSizeOption } from '../classify'
 import * as db from '../db'
 import { fetchJson, fetchText, HttpError, mapLimit, sleep, tryFetchJson } from '../http'
@@ -107,14 +108,86 @@ const COLLECTION_CONCURRENCY = 4
 const MAX_CATEGORY_COLLECTIONS = 24
 const MAX_MENU_COLLECTIONS_PER_GENDER = 20
 
-/** Handles of the collections linked from the store's homepage menus. */
-async function menuCollections(base: string): Promise<Set<string>> {
+/**
+ * The collections linked from the store's homepage menus, each with the gender
+ * of the menu heading it sits under ("Footwear › Men › View All" is men's even
+ * though the collection is just called "Shoes"), or null when it sits under
+ * none or under both.
+ */
+async function menuCollections(base: string): Promise<Map<string, 'men' | 'women' | null>> {
+  let html: string
   try {
-    const html = await fetchText(base)
-    return new Set([...html.matchAll(/href="(?:https?:\/\/[^"/]+)?(?:\/[a-z]{2}(?:-[a-z]{2})?)?\/collections\/([\w-]+)\/?["?#]/gi)].map((m) => m[1].toLowerCase()))
+    html = await fetchText(base)
   } catch {
-    return new Set()
+    return new Map()
   }
+  const found = new Map<string, Set<'men' | 'women'>>()
+  for (const { handle, gender } of menuLinks(html)) {
+    // Shopify's built-in "all" collection is the whole catalogue, wherever a menu links it.
+    if (handle === 'all') continue
+    const set = found.get(handle) ?? found.set(handle, new Set()).get(handle)!
+    if (gender) set.add(gender)
+  }
+  return new Map([...found].map(([h, set]) => [h, set.size === 1 ? [...set][0] : null]))
+}
+
+const HANDLE = /^(?:https?:\/\/[^/]+)?(?:\/[a-z]{2}(?:-[a-z]{2})?)?\/collections\/([\w-]+)\/?(?:[?#].*)?$/i
+
+/** Every collection link in a page, with the gender of its nearest gendered menu heading. */
+export function menuLinks(html: string): { handle: string; gender: 'men' | 'women' | null; path: string[] }[] {
+  const $ = load(html)
+  $('script, style, svg, noscript').remove()
+  // Menus often keep a submenu in a separate panel opened by a button ("Women — Open submenu").
+  const controllers = new Map<string, AnyNode>()
+  $('[aria-controls]').each((_, el) => {
+    for (const id of ($(el).attr('aria-controls') ?? '').split(/\s+/)) if (id && !controllers.has(id)) controllers.set(id, el)
+  })
+  const text = (el: AnyNode) =>
+    ($(el).attr('aria-label') && !$(el).text().trim() ? $(el).attr('aria-label')! : $(el).text()).replace(/\s+/g, ' ').trim()
+  // A menu item's own label: its first link, button or heading outside its nested lists.
+  const labelOf = (li: AnyNode): string => {
+    const list = $(li).parent().closest('ul, ol')[0]
+    const own = $(li)
+      .find('a, button, summary, span, h2, h3, h4, h5, h6, p')
+      .filter((_, el) => $(el).closest('ul, ol')[0] === list)
+      .first()
+    return own.length ? text(own[0]) : ''
+  }
+  const out: { handle: string; gender: 'men' | 'women' | null; path: string[] }[] = []
+  $('a[href*="/collections/"]').each((_, a) => {
+    const handle = ($(a).attr('href') ?? '').match(HANDLE)?.[1]?.toLowerCase()
+    if (!handle) return
+    const path: string[] = [text(a)]
+    const seen = new Set<AnyNode>()
+    let cur: AnyNode | null = (a as Element).parent
+    while (cur && !seen.has(cur) && path.length < 12) {
+      seen.add(cur)
+      const el = cur as Element
+      if (el.type === 'tag' && (el.name === 'li' || el.name === 'details')) {
+        const label = labelOf(el)
+        if (label && label !== path[path.length - 1]) path.push(label)
+      }
+      const controller = el.attribs?.id ? controllers.get(el.attribs.id) : undefined
+      if (controller && !seen.has(controller)) {
+        path.push(text(controller))
+        cur = (controller as Element).parent
+        continue
+      }
+      cur = el.parent
+    }
+    // The nearest heading that names a gender decides; long labels are content, not headings.
+    let gender: 'men' | 'women' | null = null
+    for (const label of path) {
+      if (!label || label.length > 40) continue
+      const g = collectionGender('', label)
+      if (g) {
+        gender = g
+        break
+      }
+    }
+    out.push({ handle, gender, path })
+  })
+  return out
 }
 
 // A collection's membership is re-read when its product count changes, or after this long.
@@ -187,9 +260,12 @@ async function genderMembership(
 
   // Prefer the sections the store's own menus link to ("Men > Shirts", "Women > Dresses"):
   // together they cover each department, where the largest few can miss pieces.
+  // A section's own name decides its gender; otherwise the menu heading above it does.
   const menu = await menuCollections(base)
   for (const g of ['men', 'women'] as const) {
-    const linked = collections.filter((c) => menu.has(c.handle) && (c.products_count ?? 1) > 0 && collectionGender(c.handle, c.title) === g)
+    const linked = collections
+      .filter((c) => menu.has(c.handle) && (c.products_count ?? 1) > 0 && (collectionGender(c.handle, c.title) ?? menu.get(c.handle)) === g)
+      .sort((a, b) => (b.products_count ?? 0) - (a.products_count ?? 0))
     if (linked.length < 2) continue
     const keep = jobs.filter((j) => j.label !== g)
     jobs.length = 0

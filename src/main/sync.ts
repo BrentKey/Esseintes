@@ -1,5 +1,5 @@
 import { load } from 'cheerio'
-import type { Size, Store, SyncStatus, SyncStoreResult } from '@shared/types'
+import type { Gender, Size, Store, SyncStatus, SyncStoreResult } from '@shared/types'
 import { auralee } from './adapters/auralee'
 import { pageReading, takePendingReads } from './adapters/gentle'
 import { depict } from './adapters/depict'
@@ -9,9 +9,9 @@ import type { Adapter, RawProduct } from './adapters/types'
 import { woocommerce } from './adapters/woocommerce'
 import { type NewAlert, wishlistAlerts } from './alerts'
 import { brandResolver } from './brands'
-import { departmentOf } from '@shared/categories'
 import { classifyCategory, classifyGender, isKids } from './classify'
 import * as db from './db'
+import { PROFILE_VERSION, profileStore } from './profile'
 import { mapLimit } from './http'
 import { refreshRates } from './currency'
 import { detectPromotions } from './promotions'
@@ -22,6 +22,13 @@ const STORE_CONCURRENCY = 5
 const PAGE_READ_CONCURRENCY = 3
 // Listings that aren't things you'd buy on their own: gift cards, shipping
 // add-ons, and lens upgrades that eyewear stores list as separate products.
+// Listings that aren't for sale at all: lookbook pages ("Resort 21 Look 8", typed
+// "Lookbook") and placeholders priced at something like $9,999,999,999.
+const LOOKBOOK = /\blook ?books?/i
+const LOOK_TITLE = /^(\S+\s+){0,4}look \d+$/i
+const PLACEHOLDER_PRICE = 10_000_000
+const notForSale = (raw: RawProduct) =>
+  raw.price >= PLACEHOLDER_PRICE || LOOKBOOK.test(raw.productType) || LOOK_TITLE.test(raw.title.trim())
 const NOT_A_PRODUCT = /\b(gift ?cards?|e-?gift|gift ?vouchers?|gift ?certificates?|shipping protection|route package protection|prescription lens(es)?|custom lens(es)?|lens (upgrade|option)s?|blue light filter lens(es)?|rox_lens)\b/i
 
 let status: SyncStatus = { running: false, currentStore: null, completed: 0, total: 0, lastRunAt: null, results: [] }
@@ -93,7 +100,8 @@ async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cac
     const storeAlerts: NewAlert[] = []
 
     // Classify everything first so the store's overall mix can inform unlabelled items.
-    const products = fetched.products.filter(
+    const forSale = fetched.products.filter((raw) => !notForSale(raw))
+    const products = forSale.filter(
       (raw) =>
         !NOT_A_PRODUCT.test(`${raw.productType} ${raw.title}`) &&
         // Listings without a single photo are placeholders or spare parts.
@@ -116,18 +124,12 @@ async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cac
       const id = `${store.id}:${raw.externalId}`
       if (!byId.has(id)) byId.set(id, toStored(store, raw, id, currency, brandOf(raw.brand)))
     }
-    // A store whose men's section holds nearly everything (and has no women's
-    // section) is signalling that the clothing left outside it is womenswear.
+    // The store's own structure settles what the products' words leave open (see profile.ts).
     const rawById = new Map(products.map((r) => [`${store.id}:${r.externalId}`, r]))
-    const raws = [...byId.keys()].map((id) => rawById.get(id)!)
-    const share = (g: string) => raws.filter((r) => r.collectionGender === g || r.collectionGender === 'unisex').length / Math.max(1, raws.length)
-    for (const [inside, outside] of [['men', 'women'], ['women', 'men']] as const) {
-      if (share(inside) < 0.85 || share(outside) > 0) continue
-      for (const [i, p] of [...byId.values()].entries())
-        if (p.gender === 'unknown' && !raws[i].collectionGender && ['Clothing', 'Shoes'].includes(departmentOf(p.category))) p.gender = outside
-    }
-    const storeGender = inferStoreGender([...byId.values()].map((p) => p.gender))
-    if (storeGender) for (const p of byId.values()) if (p.gender === 'unknown') p.gender = storeGender
+    const items = [...byId.entries()].map(([id, p]) => ({ p, gender: p.gender as Gender, category: p.category, section: rawById.get(id)!.collectionGender }))
+    const profile = profileStore(items, fetched.products.length - forSale.length)
+    for (const i of items) i.p.gender = i.gender
+    const storeGender = profile.storeGender
     db.updateStore(store.id, { gender: storeGender ?? 'mixed' })
 
     // Only keep the user's department: drop items that belong to the other one.
@@ -155,7 +157,8 @@ async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cac
       // Only retire products when we trust the fetch was complete; a partial
       // response (rate limit, outage) shouldn't wipe out the catalogue. A
       // department change legitimately shrinks it, so skip the check then.
-      const scopeChanged = store.scope !== settings.gender
+      // New gender rules (a changed profile version) can too.
+      const scopeChanged = store.scope !== settings.gender || store.profile?.version !== PROFILE_VERSION
       const plausible = scopeChanged || seen.size >= liveBefore * 0.5
       if (fetched.complete && plausible) {
         const gone = [...existing.entries()].filter(([id, r]) => !seen.has(id) && !r.removed_at).map(([id]) => id)
@@ -171,28 +174,12 @@ async function syncStore(store: Store, alerts: NewAlert[], pages: 'defer' | 'cac
     } catch {
       /* homepage unreachable: keep previous promotions */
     }
-    db.updateStore(store.id, { lastSyncedAt: new Date().toISOString(), lastError: null, currency, scope: settings.gender, source: fetched.source ?? null })
+    db.updateStore(store.id, { lastSyncedAt: new Date().toISOString(), lastError: null, currency, scope: settings.gender, source: fetched.source ?? null, profile })
   } catch (e) {
     result.error = e instanceof Error ? e.message : String(e)
     db.updateStore(store.id, { lastError: result.error })
   }
   return result
-}
-
-/**
- * A store whose labelled items are overwhelmingly one gender (a menswear
- * brand, say) is treated as that gender for items it doesn't label.
- */
-function inferStoreGender(genders: string[]): 'men' | 'women' | null {
-  const men = genders.filter((g) => g === 'men').length
-  const women = genders.filter((g) => g === 'women').length
-  const labelled = men + women
-  // A handful of labelled items isn't enough to judge a whole store (Our Legacy
-  // labelled a few women's pieces and left its menswear unmarked).
-  if (labelled < Math.max(5, genders.length * 0.3)) return null
-  if (men / labelled >= 0.9) return 'men'
-  if (women / labelled >= 0.9) return 'women'
-  return null
 }
 
 const urlPath = (url: string) => {

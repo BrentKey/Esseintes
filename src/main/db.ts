@@ -162,6 +162,7 @@ export function openDb(file: string) {
   ensureColumn('products', 'new_color_name', 'TEXT')
   ensureColumn('favorites', 'size', 'TEXT')
   ensureColumn('stores', 'source', 'TEXT')
+  ensureColumn('stores', 'profile', 'TEXT')
   runOnce('reset-price-history-2026-09-27', () => {
     // Earlier versions recorded prices from mis-read catalogues; start the history
     // again from each product's current price.
@@ -282,6 +283,7 @@ function rowToStore(r: any): Store {
     lastError: r.last_error,
     scope: r.scope ?? null,
     source: r.source ?? null,
+    profile: r.profile ? JSON.parse(r.profile) : null,
     productCount: r.product_count ?? 0,
     createdAt: r.created_at
   }
@@ -304,11 +306,12 @@ export function insertStore(url: string, name: string, gender: StoreGender): Sto
 export function updateStore(id: number, patch: Record<string, unknown>) {
   const cols: Record<string, string> = {
     name: 'name', gender: 'gender', enabled: 'enabled', platform: 'platform',
-    currency: 'currency', lastSyncedAt: 'last_synced_at', lastError: 'last_error', scope: 'scope', source: 'source'
+    currency: 'currency', lastSyncedAt: 'last_synced_at', lastError: 'last_error', scope: 'scope', source: 'source', profile: 'profile'
   }
   for (const [k, v] of Object.entries(patch)) {
     if (!cols[k] || v === undefined) continue
-    db.prepare(`UPDATE stores SET ${cols[k]} = ? WHERE id = ?`).run(typeof v === 'boolean' ? (v ? 1 : 0) : (v as any), id)
+    const value = typeof v === 'boolean' ? (v ? 1 : 0) : v !== null && typeof v === 'object' ? JSON.stringify(v) : v
+    db.prepare(`UPDATE stores SET ${cols[k]} = ? WHERE id = ?`).run(value as any, id)
   }
   return getStore(id)!
 }

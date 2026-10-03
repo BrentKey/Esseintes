@@ -1,10 +1,22 @@
 import { useEffect, useState } from 'react'
-import type { Store } from '@shared/types'
+import type { Store, StoreProfile } from '@shared/types'
 import { useData, useLiveVersion, useSync } from '../data'
 import { api, timeAgo } from '../lib'
 import { useNav } from '../nav'
 
 const PLATFORM_LABEL: Record<string, string> = { shopify: 'Shopify', woocommerce: 'WooCommerce', depict: 'Centra (Depict)', auralee: 'Auralee (gentle)', generic: 'Generic (sitemap)' }
+
+/** How a store's men's and women's pieces are told apart, in a line. */
+function profileLine(p: StoreProfile): string {
+  const parts: string[] = []
+  if (p.source === 'sections') {
+    parts.push(`Gender from the store's sections: ${p.inMen + p.inBoth} in men's, ${p.inWomen + p.inBoth} in women's, ${p.inNeither} in neither`)
+    if (p.menDepartments.length) parts.push(`${p.menDepartments.join(', ').toLowerCase()} outside men's sections hidden`)
+  } else if (p.source === 'single') parts.push(`Gender: ${p.storeGender === 'men' ? 'menswear' : 'womenswear'} store`)
+  else parts.push('Gender from product names and descriptions only')
+  if (p.notForSale) parts.push(`${p.notForSale} lookbook or placeholder listings skipped`)
+  return parts.join(' · ')
+}
 
 export function Stores() {
   const { go } = useNav()
@@ -71,6 +83,7 @@ export function Stores() {
                   {s.gender !== 'mixed' ? ` · ${s.gender === 'men' ? 'menswear' : 'womenswear'} store` : ''} · updated{' '}
                   {timeAgo(s.lastSyncedAt)}
                 </div>
+                {s.profile && <div className="muted small">{profileLine(s.profile)}</div>}
                 {s.lastError && <div className="error small">{s.lastError}</div>}
               </div>
               <div className="store-row-actions">

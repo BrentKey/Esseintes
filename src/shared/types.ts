@@ -31,8 +31,38 @@ export interface Store {
   scope: string | null
   /** Catalogue address the last sync read (changes when a store's English version is used). */
   source: string | null
+  /** How the last sync decided men's and women's at this store. */
+  profile: StoreProfile | null
   productCount: number
   createdAt: string
+}
+
+/**
+ * How a store is read, decided from the store's own structure each sync: where
+ * its men's/women's labels come from and which departments it divides by gender.
+ */
+export interface StoreProfile {
+  /** Rules version; a change lets the next sync retire items the old rules kept. */
+  version: number
+  /**
+   * The most reliable gender signal found: the store's own men's/women's sections,
+   * a single-gender store, or only the products' own words.
+   */
+  source: 'sections' | 'single' | 'words'
+  /** Items found in the store's men's sections, women's sections, both, or neither. */
+  inMen: number
+  inWomen: number
+  inBoth: number
+  inNeither: number
+  /**
+   * Departments whose items outside every men's section are taken to be women's
+   * (set when a men's section holds nearly everything and there's no women's side).
+   */
+  menDepartments: string[]
+  /** Set when the store sells to one gender; unlabelled items follow it. */
+  storeGender: 'men' | 'women' | null
+  /** Items set aside as not for sale (lookbook pages, placeholder listings). */
+  notForSale: number
 }
 
 export interface Product {
